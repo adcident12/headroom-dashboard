@@ -660,8 +660,7 @@ class HeadroomApp(ctk.CTk):
 
         self._dep_rows = {}
         for i, (pkg, desc) in enumerate([
-            ("headroom-ai", "Headroom proxy engine"),
-            ("headroom-ai[code]", "Code-aware AST compression"),
+            ("headroom-ai[all]", "Headroom proxy engine (all features)"),
             ("customtkinter", "Modern UI framework"),
             ("pystray", "System tray support"),
             ("Pillow", "Image support for tray icon"),
@@ -1164,8 +1163,7 @@ class HeadroomApp(ctk.CTk):
     def _check_deps(self):
         from importlib.util import find_spec
         pkg_checks = {
-            "headroom-ai": "headroom",
-            "headroom-ai[code]": "tree_sitter",
+            "headroom-ai[all]": "headroom",
             "customtkinter": "customtkinter",
             "pystray": "pystray",
             "Pillow": "PIL",
@@ -1188,7 +1186,7 @@ class HeadroomApp(ctk.CTk):
 
         exe = HEADROOM_EXE
         if not exe or not os.path.isfile(exe):
-            row = self._dep_rows.get("headroom-ai")
+            row = self._dep_rows.get("headroom-ai[all]")
             if row:
                 row["status"].configure(text="○", text_color=RED)
                 row["btn"].configure(text="Install", state="normal",
@@ -1216,7 +1214,7 @@ class HeadroomApp(ctk.CTk):
                 capture_output=True, text=True, timeout=120,
             )
             success = result.returncode == 0
-            if success and pkg == "headroom-ai":
+            if success and "headroom-ai" in pkg:
                 global HEADROOM_EXE
                 HEADROOM_EXE = _find_headroom_exe()
         except Exception:

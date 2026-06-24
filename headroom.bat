@@ -5,7 +5,17 @@ title Headroom Toggle
 :: ─── Config ───
 set "PROXY_PORT=8787"
 set "PROXY_URL=http://127.0.0.1:%PROXY_PORT%"
-set "HEADROOM_EXE=C:\laragon\bin\python\python-3.10\Scripts\headroom.exe"
+:: Auto-detect headroom.exe from PATH or pip Scripts
+set "HEADROOM_EXE="
+for /f "delims=" %%I in ('where headroom.exe 2^>nul') do if not defined HEADROOM_EXE set "HEADROOM_EXE=%%I"
+if not defined HEADROOM_EXE (
+    if exist "%USERPROFILE%\AppData\Roaming\Python\Scripts\headroom.exe" (
+        set "HEADROOM_EXE=%USERPROFILE%\AppData\Roaming\Python\Scripts\headroom.exe"
+    ) else (
+        echo [Headroom] ERROR: headroom.exe not found. Run: pip install headroom-ai
+        goto :EOF
+    )
+)
 
 :: ─── Route subcommand ───
 if "%~1"=="on"     goto :CMD_ON

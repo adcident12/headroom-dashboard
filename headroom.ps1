@@ -6,7 +6,13 @@ param(
 
 $ProxyPort = 8787
 $ProxyUrl = "http://127.0.0.1:$ProxyPort"
-$HeadroomExe = "C:\laragon\bin\python\python-3.10\Scripts\headroom.exe"
+$HeadroomExe = if (Get-Command "headroom.exe" -ErrorAction SilentlyContinue) {
+    (Get-Command "headroom.exe").Source
+} elseif (Test-Path "$env:USERPROFILE\AppData\Roaming\Python\Scripts\headroom.exe") {
+    "$env:USERPROFILE\AppData\Roaming\Python\Scripts\headroom.exe"
+} else {
+    "headroom.exe"
+}
 
 function Test-ProxyRunning {
     try {

@@ -97,41 +97,61 @@ try:
 except ImportError:
     HAS_TRAY = False
 
+# ── Platform ─────────────────────────────────────────────────────────
+
+IS_WIN = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+
 # ── Config ───────────────────────────────────────────────────────────
 
 PROXY_PORT = 8787
 PROXY_URL = f"http://127.0.0.1:{PROXY_PORT}"
 REFRESH_MS = 3000
 
-_APPDATA = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "headroom-app")
+def _get_appdata():
+    if IS_WIN:
+        return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "headroom-app")
+    if IS_MAC:
+        return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "headroom-app")
+    xdg = os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config"))
+    return os.path.join(xdg, "headroom-app")
+
+_APPDATA = _get_appdata()
 CONFIG_PATH = os.path.join(_APPDATA, "config.json")
 PID_PATH = os.path.join(_APPDATA, "proxy.pid")
 
 
 def _find_headroom_exe():
-    """Auto-detect headroom.exe: env var > pip Scripts > PATH > common locations."""
+    """Auto-detect headroom executable."""
     from_env = os.environ.get("HEADROOM_EXE")
     if from_env and os.path.isfile(from_env):
         return from_env
 
-    # Check all Python Scripts directories (pip install location)
     import shutil
-    for base in sys.path:
-        scripts = os.path.join(os.path.dirname(base), "Scripts", "headroom.exe")
-        if os.path.isfile(scripts):
-            return scripts
 
-    # Search PATH but only accept .exe (not .bat/.cmd wrappers)
-    found = shutil.which("headroom.exe")
-    if found and found.lower().endswith(".exe"):
-        return found
+    if IS_WIN:
+        # Check Python Scripts directories
+        for base in sys.path:
+            scripts = os.path.join(os.path.dirname(base), "Scripts", "headroom.exe")
+            if os.path.isfile(scripts):
+                return scripts
+        found = shutil.which("headroom.exe")
+        if found and found.lower().endswith(".exe"):
+            return found
+        candidates = [
+            os.path.join(sys.prefix, "Scripts", "headroom.exe"),
+            os.path.join(os.path.expanduser("~"), "AppData", "Roaming",
+                         "Python", "Scripts", "headroom.exe"),
+        ]
+    else:
+        found = shutil.which("headroom")
+        if found:
+            return found
+        candidates = [
+            os.path.join(sys.prefix, "bin", "headroom"),
+            os.path.join(os.path.expanduser("~"), ".local", "bin", "headroom"),
+        ]
 
-    candidates = [
-        os.path.join(sys.prefix, "Scripts", "headroom.exe"),
-        os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "Python",
-                     "Scripts", "headroom.exe"),
-        os.path.join(os.path.expanduser("~"), ".local", "bin", "headroom"),
-    ]
     for p in candidates:
         if os.path.isfile(p):
             return p
@@ -139,6 +159,99 @@ def _find_headroom_exe():
 
 
 HEADROOM_EXE = _find_headroom_exe()
+
+# ── Platform helpers ─────────────────────────────────────────────────
+
+def _popen_kwargs():
+    if IS_WIN:
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+def _kill_pid(pid):
+    if IS_WIN:
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                       capture_output=True, **_popen_kwargs())
+    else:
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(0.5)
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+def _kill_by_name():
+    if IS_WIN:
+        subprocess.run(["taskkill", "/F", "/IM", "headroom.exe"],
+                       capture_output=True, **_popen_kwargs())
+    else:
+        subprocess.run(["pkill", "-f", "headroom.*proxy"],
+                       capture_output=True)
+
+def _set_env_persistent(key, value):
+    """Set user-level env var that persists across sessions."""
+    os.environ[key] = value
+    if IS_WIN:
+        subprocess.run(["setx", key, value],
+                       capture_output=True, **_popen_kwargs())
+    elif IS_MAC:
+        _write_shell_export(key, value)
+    else:
+        _write_shell_export(key, value)
+
+def _unset_env_persistent(key):
+    """Remove user-level env var."""
+    os.environ.pop(key, None)
+    if IS_WIN:
+        subprocess.run(["setx", key, ""],
+                       capture_output=True, **_popen_kwargs())
+        subprocess.run(["reg", "delete", r"HKCU\Environment",
+                        "/v", key, "/f"],
+                       capture_output=True, **_popen_kwargs())
+    else:
+        _remove_shell_export(key)
+
+def _write_shell_export(key, value):
+    """Append export to ~/.bashrc and ~/.zshrc if not already present."""
+    line = f'export {key}="{value}"'
+    for rc in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
+        if os.path.isfile(rc):
+            content = open(rc).read()
+            if line not in content:
+                with open(rc, "a") as f:
+                    f.write(f"\n# Added by Headroom Dashboard\n{line}\n")
+
+def _remove_shell_export(key):
+    """Remove export lines from shell rc files."""
+    for rc in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
+        if os.path.isfile(rc):
+            lines = open(rc).readlines()
+            with open(rc, "w") as f:
+                skip_next = False
+                for ln in lines:
+                    if f"export {key}=" in ln:
+                        skip_next = False
+                        continue
+                    if ln.strip() == "# Added by Headroom Dashboard":
+                        skip_next = True
+                        continue
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    f.write(ln)
+
+def _open_in_explorer(filepath):
+    filepath = os.path.abspath(filepath)
+    folder = os.path.dirname(filepath) if os.path.isfile(filepath) else filepath
+    if IS_WIN:
+        if os.path.isfile(filepath):
+            subprocess.Popen(["explorer", "/select,", filepath])
+        else:
+            subprocess.Popen(["explorer", folder])
+    elif IS_MAC:
+        subprocess.Popen(["open", "-R" if os.path.isfile(filepath) else "", folder])
+    else:
+        subprocess.Popen(["xdg-open", folder])
 
 PROXY_OPTIONS = [
     ("code_aware",  "Code-Aware",  "AST-based code compression",                True),
@@ -686,15 +799,16 @@ class HeadroomApp(ctk.CTk):
         try:
             exe = HEADROOM_EXE
             if not exe or not os.path.isfile(exe):
+                name = "headroom.exe" if IS_WIN else "headroom"
                 self.after(0, lambda: self._show_error(
-                    "headroom.exe not found.\n\n"
+                    f"{name} not found.\n\n"
                     "Install:  pip install headroom-ai\n"
                     "Or set the HEADROOM_EXE environment variable."))
                 return
 
             cfg = load_config()
             args = build_proxy_args(cfg)
-            proc = subprocess.Popen(args, creationflags=subprocess.CREATE_NO_WINDOW)
+            proc = subprocess.Popen(args, **_popen_kwargs())
             self._proxy_proc = proc
             save_pid(proc.pid)
 
@@ -712,10 +826,7 @@ class HeadroomApp(ctk.CTk):
                     "Check if port 8787 is already in use."))
                 return
 
-            subprocess.run(["setx", "ANTHROPIC_BASE_URL", PROXY_URL],
-                           creationflags=subprocess.CREATE_NO_WINDOW,
-                           capture_output=True)
-            os.environ["ANTHROPIC_BASE_URL"] = PROXY_URL
+            _set_env_persistent("ANTHROPIC_BASE_URL", PROXY_URL)
         except Exception as e:
             self.after(0, lambda e=e: self._show_error(f"Failed to start proxy:\n{e}"))
         finally:
@@ -723,10 +834,9 @@ class HeadroomApp(ctk.CTk):
             self.after(200, self._refresh)
 
     def _stop_proxy_process(self):
-        """Kill proxy by tracked PID first, fall back to taskkill."""
+        """Kill proxy by tracked PID first, fall back to kill by name."""
         killed = False
 
-        # Try tracked PID
         pid = None
         if self._proxy_proc and self._proxy_proc.poll() is None:
             pid = self._proxy_proc.pid
@@ -735,18 +845,13 @@ class HeadroomApp(ctk.CTk):
 
         if pid:
             try:
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                               creationflags=subprocess.CREATE_NO_WINDOW,
-                               capture_output=True)
+                _kill_pid(pid)
                 killed = True
             except Exception:
                 pass
 
-        # Fallback: kill by name only if PID method failed
         if not killed:
-            subprocess.run(["taskkill", "/F", "/IM", "headroom.exe"],
-                           creationflags=subprocess.CREATE_NO_WINDOW,
-                           capture_output=True)
+            _kill_by_name()
 
         self._proxy_proc = None
         clear_pid()
@@ -755,15 +860,7 @@ class HeadroomApp(ctk.CTk):
         try:
             self._stop_proxy_process()
             time.sleep(1)
-
-            subprocess.run(["setx", "ANTHROPIC_BASE_URL", ""],
-                           creationflags=subprocess.CREATE_NO_WINDOW,
-                           capture_output=True)
-            subprocess.run(["reg", "delete", r"HKCU\Environment",
-                            "/v", "ANTHROPIC_BASE_URL", "/f"],
-                           creationflags=subprocess.CREATE_NO_WINDOW,
-                           capture_output=True)
-            os.environ.pop("ANTHROPIC_BASE_URL", None)
+            _unset_env_persistent("ANTHROPIC_BASE_URL")
         finally:
             self._busy = False
             self.after(200, self._refresh)
@@ -1137,11 +1234,7 @@ class HeadroomApp(ctk.CTk):
         self.after(0, _update)
 
     def _open_file_location(self, filepath):
-        filepath = os.path.abspath(filepath)
-        if os.path.isfile(filepath):
-            subprocess.Popen(["explorer", "/select,", filepath])
-        elif os.path.isdir(os.path.dirname(filepath)):
-            subprocess.Popen(["explorer", os.path.dirname(filepath)])
+        _open_in_explorer(filepath)
 
     def _on_option_toggle(self, key):
         cfg = load_config()
@@ -1169,12 +1262,13 @@ class HeadroomApp(ctk.CTk):
 
             exe = HEADROOM_EXE
             if not exe or not os.path.isfile(exe):
-                self.after(0, lambda: self._show_error("headroom.exe not found."))
+                name = "headroom.exe" if IS_WIN else "headroom"
+                self.after(0, lambda: self._show_error(f"{name} not found."))
                 return
 
             cfg = load_config()
             args = build_proxy_args(cfg)
-            proc = subprocess.Popen(args, creationflags=subprocess.CREATE_NO_WINDOW)
+            proc = subprocess.Popen(args, **_popen_kwargs())
             self._proxy_proc = proc
             save_pid(proc.pid)
 
@@ -1184,10 +1278,7 @@ class HeadroomApp(ctk.CTk):
                 if h and h.get("status") == "healthy":
                     break
 
-            subprocess.run(["setx", "ANTHROPIC_BASE_URL", PROXY_URL],
-                           creationflags=subprocess.CREATE_NO_WINDOW,
-                           capture_output=True)
-            os.environ["ANTHROPIC_BASE_URL"] = PROXY_URL
+            _set_env_persistent("ANTHROPIC_BASE_URL", PROXY_URL)
         finally:
             self._busy = False
             def _clear():

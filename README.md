@@ -28,7 +28,33 @@ One file. Double-click to run. Dependencies install themselves.
 
 ## Quick Start
 
-**Requirements:** Python 3.9+ (Windows / macOS / Linux)
+### Prerequisites — Install Python
+
+ต้องมี **Python 3.9+** ติดตั้งในเครื่องก่อน ถ้ายังไม่มี:
+
+**Windows:**
+1. ไปที่ https://www.python.org/downloads/
+2. ดาวน์โหลด Python 3.12+ แล้วรัน installer
+3. **สำคัญ:** ติ๊ก ☑ "Add Python to PATH" ตอน install
+4. เปิด terminal ใหม่ ทดสอบ: `python --version`
+
+> ถ้าเจอ "Python was not found" หลัง install — ไปที่ Settings > Apps > Advanced app settings > App execution aliases แล้ว**ปิด** "App Installer python.exe" และ "App Installer python3.exe"
+
+**macOS:**
+```bash
+brew install python
+# หรือดาวน์โหลดจาก https://www.python.org/downloads/
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt update && sudo apt install python3 python3-pip python3-tk
+```
+
+**Linux (Fedora):**
+```bash
+sudo dnf install python3 python3-pip python3-tkinter
+```
 
 ### Step 1 — Run the app
 

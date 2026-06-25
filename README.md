@@ -1,6 +1,8 @@
 # Headroom Dashboard
 
-Desktop GUI for managing [Headroom](https://headroom-docs.vercel.app) — the context optimization proxy for Claude Code and other LLM tools.
+Desktop GUI for managing [Headroom](https://headroom-docs.vercel.app) — the context optimization proxy for Claude Code.
+
+> **Note:** เวอร์ชันนี้รองรับเฉพาะ **Claude (Anthropic API)** เท่านั้น ยังไม่รองรับ OpenAI, Gemini หรือ provider อื่น
 
 One file. Double-click to run. Dependencies install themselves.
 

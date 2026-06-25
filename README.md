@@ -2,7 +2,15 @@
 
 Desktop GUI for managing [Headroom](https://headroom-docs.vercel.app) — the context optimization proxy for Claude Code.
 
-> **Note:** รองรับเฉพาะ **Claude (Anthropic API)** — ไม่รองรับ OpenAI, Gemini หรือ provider อื่น
+> **Note:** รองรับเฉพาะ **Claude** — ไม่รองรับ OpenAI, Gemini หรือ provider อื่น
+>
+> **รองรับ 2 รูปแบบ:**
+> - **Claude Pro/Max subscription** — ใช้ผ่าน Claude Code ได้เลย ไม่ต้องตั้ง API key ใดๆ Claude Code จัดการ authentication ผ่าน subscription ให้เอง headroom proxy จะ pass-through ไปตามปกติ
+> - **Anthropic API key** — สำหรับผู้ที่ใช้ API โดยตรง (ไม่ได้ใช้ subscription) ต้องตั้ง environment variable `ANTHROPIC_API_KEY` **ก่อนเปิด proxy** โดยรันคำสั่งใน terminal:
+>   - Windows (Command Prompt / PowerShell): `setx ANTHROPIC_API_KEY "sk-ant-xxxxx"` แล้ว **ปิดและเปิด terminal ใหม่** เพื่อให้ env var มีผล
+>   - macOS/Linux: เพิ่ม `export ANTHROPIC_API_KEY="sk-ant-xxxxx"` ใน `~/.bashrc` หรือ `~/.zshrc` แล้วเปิด terminal ใหม่
+>
+> **ผู้ใช้ Claude Code CLI:** หากใช้ Claude Code ผ่าน subscription อยู่แล้ว (เช่น `claude` command ใช้งานได้ปกติ) ไม่ต้องตั้ง `ANTHROPIC_API_KEY` — แค่เปิด proxy ใน Headroom Dashboard แล้วเปิด terminal ใหม่เพื่อรัน Claude Code ผ่าน proxy ได้ทันที
 
 > **Disclaimer:** Repo นี้เป็นโปรเจกต์ส่วนตัวที่สร้างขึ้นเพื่อทดสอบและใช้งานเอง — **ไม่มีแผน patch หรืออัปเดตตาม Headroom อย่างต่อเนื่อง** หาก Headroom API เปลี่ยน dashboard อาจแสดงผลไม่ถูกต้อง ยินดีแชร์ให้นำไปใช้และพัฒนาต่อได้อิสระ (fork/PR ได้เลย) แต่ไม่รับประกันการ maintain ระยะยาว
 

@@ -4,6 +4,8 @@ Desktop GUI for managing [Headroom](https://headroom-docs.vercel.app) — the co
 
 > **Note:** รองรับเฉพาะ **Claude (Anthropic API)** — ยังไม่รองรับ OpenAI, Gemini หรือ provider อื่น
 
+> **Disclaimer:** Repo นี้เป็นโปรเจกต์ส่วนตัวที่สร้างขึ้นเพื่อทดสอบและใช้งานเอง — **ไม่มีแผน patch หรืออัปเดตตาม Headroom อย่างต่อเนื่อง** หาก Headroom API เปลี่ยน dashboard อาจแสดงผลไม่ถูกต้อง ยินดีแชร์ให้นำไปใช้และพัฒนาต่อได้อิสระ (fork/PR ได้เลย) แต่ไม่รับประกันการ maintain ระยะยาว
+
 Single file. Double-click to run. Dependencies install themselves.
 
 ![Dashboard](screenshots/dashboard.png)

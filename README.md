@@ -20,6 +20,7 @@ Single file. Double-click to run. Dependencies install themselves.
 - [Rate Limit Alert](#rate-limit-alert)
 - [System Tray](#system-tray)
 - [Architecture](#architecture)
+- [Build Standalone Executable](#build-standalone-executable)
 - [Developer Guide](#developer-guide)
 - [Platform Support](#platform-support)
 - [Troubleshooting](#troubleshooting)
@@ -564,15 +565,51 @@ stats.display_session.{requests, tokens_saved}
 
 ---
 
+## Build Standalone Executable
+
+สร้างไฟล์ .exe / .app / binary ที่เปิดได้เลยโดยไม่ต้องติดตั้ง Python
+
+### วิธี Build
+
+```bash
+# ติดตั้ง dependencies (ครั้งแรก)
+pip install -r requirements.txt
+
+# Build
+python build.py
+```
+
+Output อยู่ที่ `dist/`:
+
+| OS | Output | ขนาดโดยประมาณ |
+|----|--------|--------------|
+| Windows | `dist/Headroom.exe` | ~28 MB |
+| macOS | `dist/Headroom.app` | ~30 MB |
+| Linux | `dist/Headroom` | ~25 MB |
+
+### ข้อจำกัด
+
+- **ต้อง build บน OS เดียวกับที่จะใช้** — ไม่สามารถ cross-compile ได้ (เช่น build .exe บน macOS ไม่ได้)
+- macOS: ต้อง build บน macOS จริง
+- Linux: ต้อง build บน Linux จริง
+- ผู้ใช้ปลายทางยังต้องติดตั้ง `headroom-ai` แยก (proxy engine ไม่ได้ bundle มาด้วย)
+
+---
+
 ## Files
 
 | File | จำเป็น | รายละเอียด |
 |------|--------|-----------|
 | `headroom_app.py` | ใช่ | ตัว app ทั้งหมด — ไฟล์เดียวที่ต้องใช้ |
+| `build.py` | ไม่ | Script สำหรับ build standalone executable |
+| `requirements.txt` | ไม่ | Python dependencies |
+| `headroom.ico` | ไม่ | App icon สำหรับ Windows build |
+| `headroom.png` | ไม่ | App icon source (256x256) |
 | `headroom.bat` | ไม่ | Batch CLI wrapper สำหรับ Windows |
 | `README.md` | ไม่ | เอกสารนี้ |
 
-> หากต้องการใช้บนเครื่องอื่น **copy แค่ `headroom_app.py` ไฟล์เดียว** แล้ว `python headroom_app.py`
+> **แจกจ่ายแบบง่าย:** copy แค่ `headroom_app.py` ไฟล์เดียว แล้ว `python headroom_app.py`
+> **แจกจ่ายแบบ standalone:** build ด้วย `python build.py` แล้วแจก `dist/Headroom.exe`
 
 ---
 

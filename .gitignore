@@ -3,3 +3,6 @@ __pycache__/
 *.pyo
 .claude/
 headroom_config.json
+build/
+dist/
+*.spec

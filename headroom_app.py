@@ -16,7 +16,7 @@ _REQUIRED = ["customtkinter", "pystray", "Pillow"]
 def _bootstrap():
     missing = []
     for pkg in _REQUIRED:
-        mod = {"Pillow": "PIL", "pystray": "pystray", "customtkinter": "customtkinter"}[pkg]
+        mod = {"Pillow": "PIL", "pystray": "pystray", "customtkinter": "customtkinter"}.get(pkg, pkg)
         try:
             __import__(mod)
         except ImportError:
@@ -26,55 +26,114 @@ def _bootstrap():
         return
 
     import tkinter as _tk
+    import tkinter.ttk as _ttk
+
+    BG = "#1e1e2e"
+    FG = "#cdd6f4"
+    DIM_FG = "#6c7086"
+    SUB_FG = "#a6adc8"
+    GREEN_FG = "#a6e3a1"
+    RED_FG = "#f38ba8"
+    LOG_BG = "#181825"
 
     root = _tk.Tk()
     root.title("Headroom — First-time Setup")
-    root.geometry("420x220")
-    root.configure(bg="#1e1e2e")
+    root.geometry("520x400")
+    root.configure(bg=BG)
     root.resizable(False, False)
 
-    _tk.Label(root, text="Setting up Headroom...",
-              font=("Segoe UI", 14, "bold"),
-              bg="#1e1e2e", fg="#cdd6f4").pack(pady=(28, 8))
+    _tk.Label(root, text="Welcome to Headroom!",
+              font=("Segoe UI", 16, "bold"),
+              bg=BG, fg=FG).pack(pady=(20, 4))
 
-    status_var = _tk.StringVar(value=f"Installing {', '.join(missing)}...")
+    _tk.Label(root, text="Installing required packages...",
+              font=("Segoe UI", 10),
+              bg=BG, fg=SUB_FG).pack(pady=(0, 8))
+
+    status_var = _tk.StringVar(value="Preparing...")
     _tk.Label(root, textvariable=status_var,
               font=("Segoe UI", 10),
-              bg="#1e1e2e", fg="#a6adc8").pack(pady=4)
+              bg=BG, fg=SUB_FG).pack(pady=2)
 
     progress_var = _tk.StringVar(value="")
     _tk.Label(root, textvariable=progress_var,
               font=("Segoe UI", 9),
-              bg="#1e1e2e", fg="#6c7086").pack(pady=4)
+              bg=BG, fg=DIM_FG).pack(pady=2)
+
+    style = _ttk.Style()
+    style.theme_use("default")
+    style.configure("green.Horizontal.TProgressbar",
+                     troughcolor=DIM_FG, background=GREEN_FG, thickness=10)
+    pbar = _ttk.Progressbar(root, orient="horizontal", length=400,
+                             mode="determinate",
+                             style="green.Horizontal.TProgressbar",
+                             maximum=len(missing))
+    pbar.pack(pady=(4, 8))
+
+    log_frame = _tk.Frame(root, bg=BG)
+    log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
+    log_text = _tk.Text(log_frame, height=12, width=60,
+                         font=("Consolas", 9),
+                         bg=LOG_BG, fg=FG, insertbackground=FG,
+                         state="disabled", wrap="word",
+                         borderwidth=1, relief="solid",
+                         highlightbackground=DIM_FG)
+    log_scroll = _tk.Scrollbar(log_frame, command=log_text.yview)
+    log_text.configure(yscrollcommand=log_scroll.set)
+    log_scroll.pack(side="right", fill="y")
+    log_text.pack(side="left", fill="both", expand=True)
+
+    def _log(msg):
+        log_text.configure(state="normal")
+        log_text.insert("end", msg)
+        log_text.see("end")
+        log_text.configure(state="disabled")
 
     install_ok = []
 
     def _install():
         failed = []
+        total = len(missing)
         for i, pkg in enumerate(missing):
-            root.after(0, lambda p=pkg: status_var.set(f"Installing {p}..."))
-            root.after(0, lambda i=i: progress_var.set(
-                f"({i+1}/{len(missing)})"))
+            root.after(0, lambda p=pkg, i=i, t=total: status_var.set(
+                f"Installing {p}..."))
+            root.after(0, lambda i=i, t=total: progress_var.set(
+                f"[{i+1}/{t}]"))
+            root.after(0, lambda: _log(
+                f"\n{'='*44}\n>>> pip install {pkg}\n{'='*44}\n"))
+
             try:
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     [sys.executable, "-m", "pip", "install", pkg],
-                    capture_output=True, timeout=180,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1,
                 )
-                if result.returncode != 0:
+                for line in proc.stdout:
+                    root.after(0, lambda l=line: _log(l))
+                proc.wait()
+                if proc.returncode != 0:
                     failed.append(pkg)
-            except Exception:
+                    root.after(0, lambda p=pkg: _log(f"\n[X] Failed: {p}\n"))
+                else:
+                    root.after(0, lambda p=pkg: _log(f"\n[OK] {p} installed\n"))
+            except Exception as e:
                 failed.append(pkg)
+                root.after(0, lambda e=str(e): _log(f"\n[X] Error: {e}\n"))
+
+            root.after(0, lambda i=i: pbar.configure(value=i + 1))
 
         if failed:
             root.after(0, lambda: status_var.set(
                 f"Failed: {', '.join(failed)}"))
             root.after(0, lambda: progress_var.set(
-                "Close this window and run:\n"
+                "Close and run manually:\n"
                 f"  pip install {' '.join(failed)}"))
         else:
             install_ok.append(True)
-            root.after(0, lambda: status_var.set("Done! Restarting..."))
-            root.after(800, root.destroy)
+            root.after(0, lambda: status_var.set("All installed! Restarting..."))
+            root.after(0, lambda: progress_var.set(""))
+            root.after(1200, root.destroy)
 
     threading.Thread(target=_install, daemon=True).start()
     root.mainloop()
@@ -82,7 +141,11 @@ def _bootstrap():
     if not install_ok:
         sys.exit(1)
 
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+    if IS_WIN:
+        subprocess.Popen([sys.executable] + sys.argv)
+        sys.exit(0)
+    else:
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 _bootstrap()
 
@@ -159,6 +222,7 @@ def _find_headroom_exe():
 
 
 HEADROOM_EXE = _find_headroom_exe()
+_headroom_exe_lock = threading.Lock()
 
 # ── Platform helpers ─────────────────────────────────────────────────
 
@@ -192,8 +256,10 @@ def _set_env_persistent(key, value):
     """Set user-level env var that persists across sessions."""
     os.environ[key] = value
     if IS_WIN:
-        subprocess.run(["setx", key, value],
-                       capture_output=True, **_popen_kwargs())
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment",
+                            0, winreg.KEY_SET_VALUE) as rk:
+            winreg.SetValueEx(rk, key, 0, winreg.REG_SZ, value)
     elif IS_MAC:
         _write_shell_export(key, value)
     else:
@@ -203,11 +269,13 @@ def _unset_env_persistent(key):
     """Remove user-level env var."""
     os.environ.pop(key, None)
     if IS_WIN:
-        subprocess.run(["setx", key, ""],
-                       capture_output=True, **_popen_kwargs())
-        subprocess.run(["reg", "delete", r"HKCU\Environment",
-                        "/v", key, "/f"],
-                       capture_output=True, **_popen_kwargs())
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment",
+                                0, winreg.KEY_SET_VALUE) as rk:
+                winreg.DeleteValue(rk, key)
+        except FileNotFoundError:
+            pass
     else:
         _remove_shell_export(key)
 
@@ -216,7 +284,8 @@ def _write_shell_export(key, value):
     line = f'export {key}="{value}"'
     for rc in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
         if os.path.isfile(rc):
-            content = open(rc).read()
+            with open(rc) as f:
+                content = f.read()
             if line not in content:
                 with open(rc, "a") as f:
                     f.write(f"\n# Added by Headroom Dashboard\n{line}\n")
@@ -225,7 +294,8 @@ def _remove_shell_export(key):
     """Remove export lines from shell rc files."""
     for rc in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
         if os.path.isfile(rc):
-            lines = open(rc).readlines()
+            with open(rc) as f:
+                lines = f.readlines()
             with open(rc, "w") as f:
                 skip_next = False
                 for ln in lines:
@@ -356,6 +426,13 @@ def fmt_usd(v):
     if v > 0: return f"${v:.4f}"
     return "$0.00"
 
+def fmt_rate(v):
+    if not v: return "—"
+    v = float(v)
+    if v >= 1_000_000: return f"{v / 1_000_000:.1f}M tok/s"
+    if v >= 1_000: return f"{v / 1_000:.1f}K tok/s"
+    return f"{v:.0f} tok/s"
+
 def deep(d, *keys, fallback=None):
     for k in keys:
         if isinstance(d, dict):
@@ -441,6 +518,8 @@ class HeadroomApp(ctk.CTk):
             self.protocol("WM_DELETE_WINDOW", self._minimize_to_tray)
         else:
             self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self._first_run_check()
 
         self._refresh()
 
@@ -552,16 +631,36 @@ class HeadroomApp(ctk.CTk):
         self._req_limited = self._detail_row(t_req, "Rate limited", 2)
         self._req_failed = self._detail_row(t_req, "Failed", 3)
 
-        # Performance tab
+        # Performance tab — two-column
         t_perf = tabs.add("Performance")
-        t_perf.grid_columnconfigure(1, weight=1)
-        self._perf_ttfb = self._detail_row(t_perf, "TTFB avg", 0)
-        self._perf_range = self._detail_row(t_perf, "TTFB range", 1)
-        self._perf_overhead = self._detail_row(t_perf, "Overhead", 2)
-        self._perf_latency = self._detail_row(t_perf, "Latency", 3)
+        t_perf.grid_columnconfigure((0, 1), weight=1)
 
-        # Tokens tab
-        t_tok = tabs.add("Tokens")
+        perf_left = ctk.CTkFrame(t_perf, fg_color="transparent")
+        perf_left.grid(row=0, column=0, sticky="nsew", padx=(4, 2))
+        perf_left.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(perf_left, text="LATENCY", font=ctk.CTkFont(size=9),
+                     text_color=DIM, anchor="w"
+                     ).grid(row=0, column=0, columnspan=2, padx=12, pady=(4, 0), sticky="w")
+        self._perf_ttfb = self._detail_row(perf_left, "TTFB avg", 1)
+        self._perf_range = self._detail_row(perf_left, "TTFB range", 2)
+        self._perf_overhead = self._detail_row(perf_left, "Overhead", 3)
+        self._perf_latency = self._detail_row(perf_left, "Latency", 4)
+
+        perf_right = ctk.CTkFrame(t_perf, fg_color="transparent")
+        perf_right.grid(row=0, column=1, sticky="nsew", padx=(2, 4))
+        perf_right.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(perf_right, text="THROUGHPUT", font=ctk.CTkFont(size=9),
+                     text_color=DIM, anchor="w"
+                     ).grid(row=0, column=0, columnspan=2, padx=12, pady=(4, 0), sticky="w")
+        self._tp_gen_p50 = self._detail_row(perf_right, "Gen p50", 1)
+        self._tp_gen_p95 = self._detail_row(perf_right, "Gen p95", 2)
+        self._tp_comp_p50 = self._detail_row(perf_right, "Comp p50", 3)
+        self._tp_comp_p95 = self._detail_row(perf_right, "Comp p95", 4)
+
+        # Savings tab (was Tokens)
+        t_tok = tabs.add("Savings")
         t_tok.grid_columnconfigure(1, weight=1)
         self._tok_input = self._detail_row(t_tok, "Input", 0)
         self._tok_output = self._detail_row(t_tok, "Output", 1)
@@ -569,27 +668,74 @@ class HeadroomApp(ctk.CTk):
         self._tok_compression = self._detail_row(t_tok, "Compression", 3)
         self._tok_cli = self._detail_row(t_tok, "CLI filtering", 4)
 
-        # Lifetime tab
-        t_lt = tabs.add("Lifetime")
-        t_lt.grid_columnconfigure(1, weight=1)
-        self._lt_reqs = self._detail_row(t_lt, "Requests", 0)
-        self._lt_tokens = self._detail_row(t_lt, "Tokens saved", 1)
-        self._lt_cost = self._detail_row(t_lt, "Savings", 2)
-        self._lt_session_reqs = self._detail_row(t_lt, "Session requests", 3)
-        self._lt_session_saved = self._detail_row(t_lt, "Session saved", 4)
+        ctk.CTkFrame(t_tok, height=1, fg_color=DIM).grid(
+            row=5, column=0, columnspan=2, sticky="ew", padx=16, pady=4)
+        self._cost_without = self._detail_row(t_tok, "Without proxy", 6)
+        self._cost_with = self._detail_row(t_tok, "With proxy", 7)
+        self._cost_cache = self._detail_row(t_tok, "Cache savings", 8)
 
-        # Window tokens tab
-        t_win = tabs.add("Window")
-        t_win.grid_columnconfigure(1, weight=1)
-        self._win_input = self._detail_row(t_win, "Input", 0)
-        self._win_output = self._detail_row(t_win, "Output", 1)
-        self._win_cache_read = self._detail_row(t_win, "Cache reads", 2)
-        self._win_cache_write = self._detail_row(t_win, "Cache writes", 3)
-        self._win_total = self._detail_row(t_win, "Total", 4)
-        self._win_model_frame = ctk.CTkFrame(t_win, fg_color="transparent")
-        self._win_model_frame.grid(row=5, column=0, columnspan=2,
-                                    padx=12, pady=(8, 4), sticky="w")
+        # History tab — two-column (was Lifetime + Window)
+        t_hist = tabs.add("History")
+        t_hist.grid_columnconfigure((0, 1), weight=1)
+
+        hist_left = ctk.CTkFrame(t_hist, fg_color="transparent")
+        hist_left.grid(row=0, column=0, sticky="nsew", padx=(4, 2))
+        hist_left.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(hist_left, text="SESSION", font=ctk.CTkFont(size=9),
+                     text_color=DIM, anchor="w"
+                     ).grid(row=0, column=0, columnspan=2, padx=12, pady=(4, 0), sticky="w")
+        self._lt_session_reqs = self._detail_row(hist_left, "Requests", 1)
+        self._lt_session_saved = self._detail_row(hist_left, "Saved", 2)
+
+        ctk.CTkLabel(hist_left, text="ALL TIME", font=ctk.CTkFont(size=9),
+                     text_color=DIM, anchor="w"
+                     ).grid(row=3, column=0, columnspan=2, padx=12, pady=(6, 0), sticky="w")
+        self._lt_reqs = self._detail_row(hist_left, "Requests", 4)
+        self._lt_tokens = self._detail_row(hist_left, "Tokens saved", 5)
+        self._lt_cost = self._detail_row(hist_left, "Savings", 6)
+
+        hist_right = ctk.CTkFrame(t_hist, fg_color="transparent")
+        hist_right.grid(row=0, column=1, sticky="nsew", padx=(2, 4))
+        hist_right.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(hist_right, text="WINDOW", font=ctk.CTkFont(size=9),
+                     text_color=DIM, anchor="w"
+                     ).grid(row=0, column=0, columnspan=2, padx=12, pady=(4, 0), sticky="w")
+        self._win_input = self._detail_row(hist_right, "Input", 1)
+        self._win_output = self._detail_row(hist_right, "Output", 2)
+        self._win_cache_read = self._detail_row(hist_right, "Cache reads", 3)
+        self._win_total = self._detail_row(hist_right, "Total", 4)
+
+        ctk.CTkLabel(hist_right, text="EFFICIENCY", font=ctk.CTkFont(size=9),
+                     text_color=DIM, anchor="w"
+                     ).grid(row=5, column=0, columnspan=2, padx=12, pady=(6, 0), sticky="w")
+        self._contrib_efficiency = self._detail_row(hist_right, "Rate", 6)
+
+        self._win_model_frame = ctk.CTkFrame(t_hist, fg_color="transparent")
+        self._win_model_frame.grid(row=1, column=0, columnspan=2,
+                                    padx=12, pady=(4, 2), sticky="w")
         self._win_model_labels = {}
+
+        # Agents tab
+        t_agents = tabs.add("Agents")
+        t_agents.grid_columnconfigure(1, weight=1)
+        t_agents.grid_rowconfigure(1, weight=1)
+
+        self._agent_total_reqs = self._detail_row(t_agents, "Total requests", 0)
+        self._agent_total_saved = self._detail_row(t_agents, "Tokens saved", 1)
+        self._agent_total_pct = self._detail_row(t_agents, "Savings rate", 2)
+
+        ctk.CTkFrame(t_agents, height=1, fg_color=DIM).grid(
+            row=3, column=0, columnspan=2, sticky="ew", padx=16, pady=4)
+
+        self._agent_scroll = ctk.CTkScrollableFrame(
+            t_agents, fg_color="transparent", height=80)
+        self._agent_scroll.grid(row=4, column=0, columnspan=2,
+                                 padx=4, pady=(0, 4), sticky="nsew")
+        self._agent_scroll.grid_columnconfigure(1, weight=1)
+        t_agents.grid_rowconfigure(4, weight=1)
+        self._agent_row_widgets = {}
 
         # Config tab — interactive switches
         t_cfg = tabs.add("Config")
@@ -649,44 +795,131 @@ class HeadroomApp(ctk.CTk):
         t_setup = tabs.add("Setup")
         t_setup.grid_columnconfigure(0, weight=1)
 
-        self._setup_status = ctk.CTkLabel(
-            t_setup, text="", font=ctk.CTkFont(size=10), text_color=DIM, anchor="w")
-        self._setup_status.grid(row=0, column=0, padx=12, pady=(8, 4), sticky="w")
+        # — row 0: Quick setup banner —
+        setup_top = ctk.CTkFrame(t_setup, fg_color="transparent")
+        setup_top.grid(row=0, column=0, padx=8, pady=(8, 0), sticky="ew")
+        setup_top.grid_columnconfigure(0, weight=1)
 
-        setup_scroll = ctk.CTkScrollableFrame(t_setup, fg_color="transparent", height=100)
+        self._setup_status = ctk.CTkLabel(
+            setup_top, text="Checking environment...",
+            font=ctk.CTkFont(size=11), text_color=SUBTEXT, anchor="w")
+        self._setup_status.grid(row=0, column=0, sticky="w", padx=4)
+
+        self._install_all_btn = ctk.CTkButton(
+            setup_top, text="Setup Everything",
+            width=140, height=30,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._install_all)
+        self._install_all_btn.grid(row=0, column=1, padx=(8, 4))
+
+        self._install_progress = ctk.CTkProgressBar(
+            setup_top, height=6, progress_color=GREEN, corner_radius=3)
+        self._install_progress.set(0)
+        self._install_progress.grid(row=1, column=0, columnspan=2,
+                                     sticky="ew", padx=4, pady=(4, 0))
+        self._install_progress.grid_remove()
+
+        self._install_pct_label = ctk.CTkLabel(
+            setup_top, text="", font=ctk.CTkFont(size=9),
+            text_color=SUBTEXT, anchor="w")
+        self._install_pct_label.grid(row=2, column=0, columnspan=2,
+                                      sticky="w", padx=4)
+        self._install_pct_label.grid_remove()
+
+        # — row 1: dependency list —
+        setup_scroll = ctk.CTkScrollableFrame(
+            t_setup, fg_color="transparent", height=90)
         setup_scroll.grid(row=1, column=0, padx=4, pady=4, sticky="nsew")
         setup_scroll.grid_columnconfigure(0, weight=1)
-        t_setup.grid_rowconfigure(1, weight=1)
+        t_setup.grid_rowconfigure(1, weight=0)
+
+        row_idx = 0
+
+        ctk.CTkLabel(
+            setup_scroll, text="SYSTEM TOOLS",
+            font=ctk.CTkFont(size=9), text_color=DIM,
+            anchor="w").grid(row=row_idx, column=0, sticky="w", padx=8, pady=(2, 1))
+        row_idx += 1
+
+        self._tool_rows = {}
+        for tool_id, tool_name, tool_desc in [
+            ("rust", "Rust Compiler", "Required to build headroom-ai from source"),
+        ]:
+            row_f = ctk.CTkFrame(setup_scroll, fg_color="transparent")
+            row_f.grid(row=row_idx, column=0, sticky="ew", padx=4, pady=1)
+            row_f.grid_columnconfigure(1, weight=1)
+            row_idx += 1
+
+            dot = ctk.CTkLabel(row_f, text="●", font=ctk.CTkFont(size=10),
+                               text_color=DIM, width=14)
+            dot.grid(row=0, column=0, sticky="w")
+
+            ctk.CTkLabel(row_f, text=tool_name,
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         anchor="w").grid(row=0, column=1, sticky="w", padx=(4, 0))
+
+            ver_lbl = ctk.CTkLabel(row_f, text="",
+                                   font=ctk.CTkFont(size=9), text_color=DIM, anchor="w")
+            ver_lbl.grid(row=1, column=1, sticky="w", padx=(4, 0))
+
+            btn = ctk.CTkButton(
+                row_f, text="Check", width=70, height=24,
+                font=ctk.CTkFont(size=10),
+                command=lambda t=tool_id: self._handle_tool_action(t))
+            btn.grid(row=0, column=2, rowspan=2, padx=(8, 4), sticky="e")
+
+            self._tool_rows[tool_id] = {"dot": dot, "ver": ver_lbl, "btn": btn}
+
+        sep = ctk.CTkFrame(setup_scroll, height=1, fg_color=DIM)
+        sep.grid(row=row_idx, column=0, sticky="ew", padx=12, pady=4)
+        row_idx += 1
+
+        ctk.CTkLabel(
+            setup_scroll, text="PYTHON PACKAGES",
+            font=ctk.CTkFont(size=9), text_color=DIM,
+            anchor="w").grid(row=row_idx, column=0, sticky="w", padx=8, pady=(0, 1))
+        row_idx += 1
 
         self._dep_rows = {}
-        for i, (pkg, desc) in enumerate([
-            ("headroom-ai[all]", "Headroom proxy engine (all features)"),
-            ("customtkinter", "Modern UI framework"),
+        for pkg, desc in [
+            ("headroom-ai[all]", "Headroom proxy engine"),
+            ("customtkinter", "UI framework"),
             ("pystray", "System tray support"),
             ("Pillow", "Image support for tray icon"),
-        ]):
+        ]:
             row_f = ctk.CTkFrame(setup_scroll, fg_color="transparent")
-            row_f.grid(row=i, column=0, sticky="ew", padx=4, pady=3)
-            row_f.grid_columnconfigure(0, weight=1)
+            row_f.grid(row=row_idx, column=0, sticky="ew", padx=4, pady=1)
+            row_f.grid_columnconfigure(1, weight=1)
+            row_idx += 1
 
-            status_lbl = ctk.CTkLabel(row_f, text="●", font=ctk.CTkFont(size=10),
-                                       text_color=DIM, width=16)
-            status_lbl.grid(row=0, column=0, sticky="w")
+            dot = ctk.CTkLabel(row_f, text="●", font=ctk.CTkFont(size=10),
+                               text_color=DIM, width=14)
+            dot.grid(row=0, column=0, sticky="w")
 
-            ctk.CTkLabel(row_f, text=pkg, font=ctk.CTkFont(size=12, weight="bold"),
-                         anchor="w").grid(row=0, column=1, sticky="w", padx=(4, 0))
-            ctk.CTkLabel(row_f, text=desc, font=ctk.CTkFont(size=9),
-                         text_color=DIM, anchor="w"
+            ctk.CTkLabel(row_f, text=pkg,
+                         font=ctk.CTkFont(size=11), anchor="w"
+                         ).grid(row=0, column=1, sticky="w", padx=(4, 0))
+            ctk.CTkLabel(row_f, text=desc,
+                         font=ctk.CTkFont(size=9), text_color=DIM, anchor="w"
                          ).grid(row=1, column=1, sticky="w", padx=(4, 0))
 
             btn = ctk.CTkButton(
                 row_f, text="Install", width=70, height=24,
                 font=ctk.CTkFont(size=10),
-                command=lambda p=pkg: self._install_package(p),
-            )
+                command=lambda p=pkg: self._install_package(p))
             btn.grid(row=0, column=2, rowspan=2, padx=(8, 4), sticky="e")
 
-            self._dep_rows[pkg] = {"status": status_lbl, "btn": btn}
+            self._dep_rows[pkg] = {"status": dot, "btn": btn}
+
+        # — row 2: log output —
+        self._install_log = ctk.CTkTextbox(
+            t_setup, height=130, font=ctk.CTkFont(family="Consolas", size=9),
+            fg_color=("#f0f0f0", "#181825"), text_color=("#333", "#cdd6f4"),
+            state="disabled", wrap="word", corner_radius=4,
+            border_width=1, border_color=DIM)
+        self._install_log.grid(row=2, column=0, padx=8, pady=(2, 6), sticky="nsew")
+        self._install_log.grid_remove()
+        t_setup.grid_rowconfigure(2, weight=1)
 
         self._check_deps()
 
@@ -895,13 +1128,18 @@ class HeadroomApp(ctk.CTk):
             self._update_hero(stats)
             self._update_requests(stats)
             self._update_performance(stats)
+            self._update_throughput(stats)
             self._update_tokens(stats)
+            self._update_cost(stats)
             self._update_lifetime(stats)
             self._update_window_tokens(stats)
+            self._update_contribution(stats)
+            self._update_agents(stats)
             self._update_alert(stats)
             self._update_config(health)
-        except Exception:
-            pass
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
 
         self._schedule_next_refresh()
 
@@ -1056,7 +1294,7 @@ class HeadroomApp(ctk.CTk):
         ds = deep(stats, "display_session", fallback={})
 
         if ps.get("requests", 0) > 0:
-            self._lt_reqs.configure(text=f"{int(ps['requests']):,}")
+            self._lt_reqs.configure(text=f"{int(ps.get('requests', 0)):,}")
             self._lt_tokens.configure(text=fmt_tokens(ps.get("tokens_saved", 0)))
             self._lt_cost.configure(text=fmt_usd(ps.get("compression_savings_usd", 0)))
         else:
@@ -1064,24 +1302,23 @@ class HeadroomApp(ctk.CTk):
                 w.configure(text="—")
 
         if ds.get("requests", 0) > 0:
-            self._lt_session_reqs.configure(text=f"{int(ds['requests']):,}")
+            self._lt_session_reqs.configure(text=f"{int(ds.get('requests', 0)):,}")
             self._lt_session_saved.configure(text=fmt_tokens(ds.get("tokens_saved", 0)))
         else:
             self._lt_session_reqs.configure(text="—")
             self._lt_session_saved.configure(text="—")
 
     def _update_window_tokens(self, stats):
-        wt = deep(stats, "subscription_window", "latest", "window_tokens", fallback={})
+        wt = deep(stats, "subscription_window", "window_tokens", fallback={})
         if not wt or not wt.get("total_raw"):
             for w in (self._win_input, self._win_output, self._win_cache_read,
-                      self._win_cache_write, self._win_total):
+                      self._win_total):
                 w.configure(text="—")
             return
 
         self._win_input.configure(text=fmt_tokens(wt.get("input", 0)))
         self._win_output.configure(text=fmt_tokens(wt.get("output", 0)))
         self._win_cache_read.configure(text=fmt_tokens(wt.get("cache_reads", 0)))
-        self._win_cache_write.configure(text=fmt_tokens(wt.get("cache_writes_total", 0)))
         self._win_total.configure(text=fmt_tokens(wt.get("total_raw", 0)))
 
         by_model = wt.get("by_model", {})
@@ -1097,6 +1334,83 @@ class HeadroomApp(ctk.CTk):
                                    anchor="w")
                 lbl.pack(anchor="w", pady=1)
                 self._win_model_labels[name] = lbl
+
+    def _update_throughput(self, stats):
+        tp = deep(stats, "throughput", "rolling", fallback={})
+        for widget, key in (
+            (self._tp_gen_p50, "generation_p50"),
+            (self._tp_gen_p95, "generation_p95"),
+            (self._tp_comp_p50, "compression_p50"),
+            (self._tp_comp_p95, "compression_p95"),
+        ):
+            val = tp.get(key)
+            try:
+                widget.configure(text=fmt_rate(float(val)) if val else "—")
+            except (ValueError, TypeError):
+                widget.configure(text="—")
+
+    def _update_cost(self, stats):
+        cost = deep(stats, "cost", fallback={})
+        self._cost_without.configure(text=fmt_usd(cost.get("without_headroom_usd")))
+        self._cost_with.configure(text=fmt_usd(cost.get("with_headroom_usd")))
+        cache = deep(cost, "breakdown", "cache_savings_usd", fallback=0)
+        self._cost_cache.configure(text=fmt_usd(cache))
+
+    def _update_contribution(self, stats):
+        contrib = deep(stats, "subscription_window", "contribution", fallback={})
+        eff = contrib.get("efficiency_pct", 0)
+        try:
+            self._contrib_efficiency.configure(
+                text=f"{float(eff):.1f}%" if eff else "0%")
+        except (ValueError, TypeError):
+            self._contrib_efficiency.configure(text="—")
+
+    def _update_agents(self, stats):
+        au = deep(stats, "agent_usage", fallback={})
+        totals = au.get("totals", {})
+
+        try:
+            self._agent_total_reqs.configure(
+                text=f"{int(totals.get('requests', 0)):,}")
+        except (ValueError, TypeError):
+            self._agent_total_reqs.configure(text="—")
+        self._agent_total_saved.configure(
+            text=fmt_tokens(totals.get("tokens_saved", 0)))
+        pct = totals.get("savings_percent", 0)
+        try:
+            self._agent_total_pct.configure(
+                text=f"{float(pct):.1f}%" if pct else "0%")
+        except (ValueError, TypeError):
+            self._agent_total_pct.configure(text="—")
+
+        agents = au.get("agents", [])
+        seen = set()
+        for i, agent in enumerate(agents):
+            name = agent.get("agent", "unknown")
+            seen.add(name)
+            reqs = agent.get("requests", 0)
+            saved = agent.get("tokens_saved", 0)
+            text = f"{reqs} reqs  ·  {fmt_tokens(saved)} saved"
+
+            if name in self._agent_row_widgets:
+                self._agent_row_widgets[name]["val"].configure(text=text)
+            else:
+                name_lbl = ctk.CTkLabel(
+                    self._agent_scroll, text=name,
+                    font=ctk.CTkFont(size=11, weight="bold"), anchor="w")
+                name_lbl.grid(row=i, column=0, padx=(8, 4), pady=2, sticky="w")
+
+                val_lbl = ctk.CTkLabel(
+                    self._agent_scroll, text=text,
+                    font=ctk.CTkFont(size=11), text_color=SUBTEXT, anchor="e")
+                val_lbl.grid(row=i, column=1, padx=(4, 8), pady=2, sticky="e")
+                self._agent_row_widgets[name] = {"name": name_lbl, "val": val_lbl}
+
+        for old_name in list(self._agent_row_widgets):
+            if old_name not in seen:
+                self._agent_row_widgets[old_name]["name"].destroy()
+                self._agent_row_widgets[old_name]["val"].destroy()
+                del self._agent_row_widgets[old_name]
 
     def _update_alert(self, stats):
         five = deep(stats, "subscription_window", "latest", "five_hour", fallback={})
@@ -1160,6 +1474,54 @@ class HeadroomApp(ctk.CTk):
 
     # ── Setup / Install ─────────────────────────────────────────────
 
+    def _first_run_check(self):
+        from importlib.util import find_spec
+        pkg_checks = {"headroom": True, "customtkinter": True,
+                      "pystray": True, "PIL": True}
+        has_missing = any(find_spec(m) is None for m in pkg_checks)
+        if not has_missing:
+            exe = HEADROOM_EXE
+            has_missing = not exe or not os.path.isfile(exe)
+        if has_missing:
+            self._tabs.set("Setup")
+
+    @staticmethod
+    def _detect_rust():
+        cargo_bin = os.path.join(os.path.expanduser("~"), ".cargo", "bin")
+        if IS_WIN:
+            candidates = [
+                os.path.join(cargo_bin, "rustc.exe"),
+                "rustc",
+            ]
+        else:
+            candidates = [
+                os.path.join(cargo_bin, "rustc"),
+                "rustc",
+            ]
+        for cmd in candidates:
+            try:
+                r = subprocess.run(
+                    [cmd, "--version"],
+                    capture_output=True, text=True, timeout=10,
+                    env={**os.environ, "PATH": cargo_bin + os.pathsep + os.environ.get("PATH", "")},
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    ver = r.stdout.strip().split()[1]
+                    return ver
+            except (FileNotFoundError, OSError):
+                continue
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _rust_needs_update(ver_str):
+        try:
+            parts = [int(x) for x in ver_str.split(".")]
+            return parts < [1, 88, 0]
+        except (ValueError, IndexError):
+            return True
+
     def _check_deps(self):
         from importlib.util import find_spec
         pkg_checks = {
@@ -1169,6 +1531,30 @@ class HeadroomApp(ctk.CTk):
             "Pillow": "PIL",
         }
         all_ok = True
+
+        rust_ver = self._detect_rust()
+        rust_row = self._tool_rows.get("rust")
+        if rust_row:
+            if rust_ver is None:
+                rust_row["dot"].configure(text="○", text_color=RED)
+                rust_row["ver"].configure(text="Not installed", text_color=RED)
+                rust_row["btn"].configure(text="Install", state="normal",
+                                          command=lambda: self._install_rust())
+                all_ok = False
+            elif self._rust_needs_update(rust_ver):
+                rust_row["dot"].configure(text="●", text_color=YELLOW)
+                rust_row["ver"].configure(
+                    text=f"v{rust_ver} (need 1.88+)", text_color=YELLOW)
+                rust_row["btn"].configure(text="Update", state="normal",
+                                          command=lambda: self._update_rust())
+                all_ok = False
+            else:
+                rust_row["dot"].configure(text="●", text_color=GREEN)
+                rust_row["ver"].configure(text=f"v{rust_ver}", text_color=DIM)
+                rust_row["btn"].configure(text="OK", state="disabled",
+                                          fg_color="transparent", border_width=1,
+                                          border_color=DIM, text_color=DIM)
+
         for pkg, row in self._dep_rows.items():
             mod = pkg_checks.get(pkg, pkg)
             installed = find_spec(mod) is not None
@@ -1180,8 +1566,9 @@ class HeadroomApp(ctk.CTk):
             else:
                 row["status"].configure(text="○", text_color=RED)
                 row["btn"].configure(text="Install", state="normal",
-                                     fg_color=None, border_width=0,
-                                     text_color=None)
+                                     fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"],
+                                     border_width=0,
+                                     text_color=ctk.ThemeManager.theme["CTkButton"]["text_color"])
                 all_ok = False
 
         exe = HEADROOM_EXE
@@ -1190,44 +1577,296 @@ class HeadroomApp(ctk.CTk):
             if row:
                 row["status"].configure(text="○", text_color=RED)
                 row["btn"].configure(text="Install", state="normal",
-                                     fg_color=None, border_width=0,
-                                     text_color=None)
+                                     fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"],
+                                     border_width=0,
+                                     text_color=ctk.ThemeManager.theme["CTkButton"]["text_color"])
                 all_ok = False
 
         if all_ok:
-            self._setup_status.configure(text="All dependencies installed ✓",
-                                          text_color=GREEN)
+            self._setup_status.configure(
+                text="Ready — all dependencies installed",
+                text_color=GREEN)
+            self._install_all_btn.configure(
+                text="Ready", state="disabled",
+                fg_color="transparent", border_width=1,
+                border_color=DIM, text_color=DIM)
         else:
-            self._setup_status.configure(text="Some dependencies missing",
-                                          text_color=YELLOW)
+            self._setup_status.configure(
+                text="Some items need attention",
+                text_color=YELLOW)
+            self._install_all_btn.configure(
+                text="Setup Everything", state="normal",
+                fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"],
+                border_width=0,
+                text_color=ctk.ThemeManager.theme["CTkButton"]["text_color"])
+
+    def _log_append(self, text):
+        self._install_log.configure(state="normal")
+        self._install_log.insert("end", text)
+        self._install_log.see("end")
+        self._install_log.configure(state="disabled")
+
+    def _show_log(self, clear=True):
+        if clear:
+            self._install_log.configure(state="normal")
+            self._install_log.delete("1.0", "end")
+            self._install_log.configure(state="disabled")
+        self._install_log.grid()
+        self._install_progress.grid()
+        self._install_pct_label.grid()
+        self._install_progress.set(0)
+        self._install_pct_label.configure(text="")
+
+    def _finish_log(self):
+        self._install_progress.grid_remove()
+        self._install_pct_label.grid_remove()
+
+    @staticmethod
+    def _env_with_cargo():
+        cargo_bin = os.path.join(os.path.expanduser("~"), ".cargo", "bin")
+        env = os.environ.copy()
+        if cargo_bin not in env.get("PATH", ""):
+            env["PATH"] = cargo_bin + os.pathsep + env.get("PATH", "")
+        return env
+
+    def _run_stream(self, cmd, env=None):
+        with subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, env=env or os.environ) as proc:
+            for line in proc.stdout:
+                self.after(0, lambda l=line: self._log_append(l))
+            proc.wait()
+            return proc.returncode
+
+    @staticmethod
+    def _ensure_cargo_in_path():
+        cargo_bin = os.path.join(os.path.expanduser("~"), ".cargo", "bin")
+        if cargo_bin not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = cargo_bin + os.pathsep + os.environ.get("PATH", "")
+
+    # — Rust —
+
+    def _handle_tool_action(self, tool_id):
+        if tool_id == "rust":
+            rust_ver = self._detect_rust()
+            if rust_ver is None:
+                self._install_rust()
+            elif self._rust_needs_update(rust_ver):
+                self._update_rust()
+
+    def _install_rust(self):
+        row = self._tool_rows["rust"]
+        row["btn"].configure(text="Installing...", state="disabled")
+        self._setup_status.configure(text="Installing Rust...", text_color=SUBTEXT)
+        self._show_log()
+        threading.Thread(target=self._do_install_rust, daemon=True).start()
+
+    def _do_install_rust(self):
+        self.after(0, lambda: self._log_append(">>> Installing Rust via rustup-init...\n"))
+        self.after(0, lambda: self._install_progress.configure(mode="indeterminate"))
+        self.after(0, lambda: self._install_progress.start())
+
+        if IS_WIN:
+            import urllib.request as _ur
+            url = "https://win.rustup.rs/x86_64"
+            installer = os.path.join(os.environ.get("TEMP", "."), "rustup-init.exe")
+            try:
+                self.after(0, lambda: self._log_append("Downloading rustup-init.exe...\n"))
+                _ur.urlretrieve(url, installer)
+                rc = self._run_stream([installer, "-y", "--default-toolchain", "stable"])
+            except Exception as e:
+                self.after(0, lambda e=str(e): self._log_append(f"Error: {e}\n"))
+                rc = 1
+        else:
+            rc = self._run_stream(["sh", "-c", "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"])
+
+        self._ensure_cargo_in_path()
+
+        def _done():
+            self._install_progress.stop()
+            self._install_progress.configure(mode="determinate")
+            if rc == 0:
+                self._install_progress.set(1)
+                self._log_append("\nRust installed.\n")
+            else:
+                self._install_progress.set(0)
+                self._log_append("\nFailed to install Rust.\n")
+                self._log_append("Install manually: https://rustup.rs\n")
+            self._check_deps()
+            self._finish_log()
+        self.after(0, _done)
+
+    def _update_rust(self):
+        row = self._tool_rows["rust"]
+        row["btn"].configure(text="Updating...", state="disabled")
+        self._setup_status.configure(text="Updating Rust...", text_color=SUBTEXT)
+        self._show_log()
+        threading.Thread(target=self._do_update_rust, daemon=True).start()
+
+    def _do_update_rust(self):
+        self.after(0, lambda: self._log_append(">>> rustup update stable\n"))
+        self.after(0, lambda: self._install_progress.configure(mode="indeterminate"))
+        self.after(0, lambda: self._install_progress.start())
+
+        env = self._env_with_cargo()
+        cargo_bin = os.path.join(os.path.expanduser("~"), ".cargo", "bin")
+        rustup = os.path.join(cargo_bin, "rustup.exe" if IS_WIN else "rustup")
+        cmd = [rustup, "update", "stable"] if os.path.isfile(rustup) else ["rustup", "update", "stable"]
+        rc = self._run_stream(cmd, env=env)
+
+        self._ensure_cargo_in_path()
+
+        def _done():
+            self._install_progress.stop()
+            self._install_progress.configure(mode="determinate")
+            if rc == 0:
+                self._install_progress.set(1)
+                self._log_append("\nRust updated.\n")
+            else:
+                self._install_progress.set(0)
+                self._log_append("\nFailed to update Rust.\n")
+            self._check_deps()
+            self._finish_log()
+        self.after(0, _done)
+
+    # — Python packages —
+
+    def _install_all(self):
+        from importlib.util import find_spec
+        pkg_checks = {
+            "headroom-ai[all]": "headroom",
+            "customtkinter": "customtkinter",
+            "pystray": "pystray",
+            "Pillow": "PIL",
+        }
+
+        rust_ver = self._detect_rust()
+        need_rust = rust_ver is None or self._rust_needs_update(rust_ver)
+
+        missing = [pkg for pkg in self._dep_rows
+                   if find_spec(pkg_checks.get(pkg, pkg)) is None]
+        if not missing:
+            exe = HEADROOM_EXE
+            if not exe or not os.path.isfile(exe):
+                missing = ["headroom-ai[all]"]
+        if not missing and not need_rust:
+            return
+
+        self._install_all_btn.configure(text="Installing...", state="disabled")
+        for row in self._dep_rows.values():
+            row["btn"].configure(state="disabled")
+        for row in self._tool_rows.values():
+            row["btn"].configure(state="disabled")
+        self._show_log()
+        threading.Thread(
+            target=self._do_install_all,
+            args=(missing, need_rust, rust_ver),
+            daemon=True).start()
+
+    def _do_install_all(self, packages, need_rust, rust_ver):
+        steps = []
+        if need_rust:
+            steps.append(("rust", "Rust Compiler"))
+        for pkg in packages:
+            steps.append(("pip", pkg))
+        total = len(steps)
+
+        for idx, (kind, name) in enumerate(steps):
+            pct = idx / total
+            self.after(0, lambda p=pct: self._install_progress.set(p))
+            self.after(0, lambda n=name, i=idx, t=total:
+                       self._install_pct_label.configure(text=f"[{i+1}/{t}] {n}"))
+            self.after(0, lambda n=name: self._setup_status.configure(
+                text=f"Installing {n}...", text_color=SUBTEXT))
+
+            if kind == "rust":
+                self.after(0, lambda: self._log_append(
+                    "\n--- Rust Compiler ---\n"))
+                if rust_ver is None:
+                    self.after(0, lambda: self._log_append(
+                        ">>> Installing Rust via rustup-init...\n"))
+                    if IS_WIN:
+                        import urllib.request as _ur
+                        url = "https://win.rustup.rs/x86_64"
+                        installer = os.path.join(
+                            os.environ.get("TEMP", "."), "rustup-init.exe")
+                        try:
+                            _ur.urlretrieve(url, installer)
+                            rc = self._run_stream(
+                                [installer, "-y", "--default-toolchain", "stable"])
+                        except Exception:
+                            rc = 1
+                    else:
+                        rc = self._run_stream(["sh", "-c",
+                            "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"])
+                    if rc == 0:
+                        cargo_bin = os.path.join(
+                            os.path.expanduser("~"), ".cargo", "bin")
+                        if cargo_bin not in os.environ.get("PATH", ""):
+                            os.environ["PATH"] = (
+                                cargo_bin + os.pathsep + os.environ.get("PATH", ""))
+                else:
+                    self.after(0, lambda: self._log_append(
+                        ">>> rustup update stable\n"))
+                    self._run_stream(["rustup", "update", "stable"])
+            else:
+                self.after(0, lambda n=name: self._dep_rows[n]["btn"].configure(
+                    text="Installing...", state="disabled"))
+                self.after(0, lambda n=name: self._log_append(
+                    f"\n--- {n} ---\n>>> pip install {n}\n"))
+                try:
+                    rc = self._run_stream(
+                        [sys.executable, "-m", "pip", "install", name])
+                    if rc == 0 and "headroom-ai" in name:
+                        global HEADROOM_EXE
+                        with _headroom_exe_lock:
+                            HEADROOM_EXE = _find_headroom_exe()
+                except Exception as e:
+                    self.after(0, lambda e=str(e): self._log_append(f"Error: {e}\n"))
+
+        def _final():
+            self._install_progress.set(1)
+            self._install_pct_label.configure(text="Done")
+            self._check_deps()
+            self._finish_log()
+        self.after(0, _final)
 
     def _install_package(self, pkg):
         row = self._dep_rows[pkg]
         row["btn"].configure(text="Installing...", state="disabled")
         self._setup_status.configure(text=f"Installing {pkg}...", text_color=SUBTEXT)
+        self._show_log()
+        self._install_pct_label.configure(text=pkg)
         threading.Thread(target=self._do_install, args=(pkg,), daemon=True).start()
 
     def _do_install(self, pkg):
+        self.after(0, lambda: self._log_append(f">>> pip install {pkg}\n"))
+        self.after(0, lambda: self._install_progress.configure(mode="indeterminate"))
+        self.after(0, lambda: self._install_progress.start())
+
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", pkg],
-                capture_output=True, text=True, timeout=120,
-            )
-            success = result.returncode == 0
+            rc = self._run_stream(
+                [sys.executable, "-m", "pip", "install", pkg])
+            success = rc == 0
             if success and "headroom-ai" in pkg:
                 global HEADROOM_EXE
                 HEADROOM_EXE = _find_headroom_exe()
-        except Exception:
+        except Exception as e:
             success = False
 
         def _update():
+            self._install_progress.stop()
+            self._install_progress.configure(mode="determinate")
             if success:
+                self._install_progress.set(1)
                 self._setup_status.configure(
-                    text=f"Installed {pkg} ✓", text_color=GREEN)
+                    text=f"Installed {pkg}", text_color=GREEN)
             else:
+                self._install_progress.set(0)
                 self._setup_status.configure(
                     text=f"Failed to install {pkg}", text_color=RED)
             self._check_deps()
+            self._finish_log()
 
         self.after(0, _update)
 

@@ -141,7 +141,7 @@ def _bootstrap():
     if not install_ok:
         sys.exit(1)
 
-    if IS_WIN:
+    if sys.platform == "win32":
         subprocess.Popen([sys.executable] + sys.argv)
         sys.exit(0)
     else:
@@ -164,6 +164,29 @@ except ImportError:
 
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
+
+# ── Single Instance Lock ────────────────────────────────────────────
+
+_instance_lock = None
+
+def _acquire_instance_lock():
+    """Return True if this is the only running instance, False otherwise."""
+    global _instance_lock
+    if IS_WIN:
+        import ctypes
+        _instance_lock = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\HeadroomAppMutex")
+        return ctypes.windll.kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+    else:
+        import fcntl
+        lock_path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "headroom-app.lock")
+        _instance_lock = open(lock_path, "w")
+        try:
+            fcntl.flock(_instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _instance_lock.write(str(os.getpid()))
+            _instance_lock.flush()
+            return True
+        except OSError:
+            return False
 
 # ── Config ───────────────────────────────────────────────────────────
 
@@ -252,6 +275,19 @@ def _kill_by_name():
         subprocess.run(["pkill", "-f", "headroom.*proxy"],
                        capture_output=True)
 
+def _broadcast_env_change():
+    """Notify Explorer.exe that environment variables changed in the Registry."""
+    if IS_WIN:
+        import ctypes
+        from ctypes import wintypes
+        HWND_BROADCAST = 0xFFFF
+        WM_SETTINGCHANGE = 0x001A
+        SMTO_ABORTIFHUNG = 0x0002
+        result = wintypes.DWORD()
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment",
+            SMTO_ABORTIFHUNG, 5000, ctypes.byref(result))
+
 def _set_env_persistent(key, value):
     """Set user-level env var that persists across sessions."""
     os.environ[key] = value
@@ -260,6 +296,7 @@ def _set_env_persistent(key, value):
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment",
                             0, winreg.KEY_SET_VALUE) as rk:
             winreg.SetValueEx(rk, key, 0, winreg.REG_SZ, value)
+        _broadcast_env_change()
     elif IS_MAC:
         _write_shell_export(key, value)
     else:
@@ -274,6 +311,7 @@ def _unset_env_persistent(key):
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment",
                                 0, winreg.KEY_SET_VALUE) as rk:
                 winreg.DeleteValue(rk, key)
+            _broadcast_env_change()
         except FileNotFoundError:
             pass
     else:
@@ -291,24 +329,20 @@ def _write_shell_export(key, value):
                     f.write(f"\n# Added by Headroom Dashboard\n{line}\n")
 
 def _remove_shell_export(key):
-    """Remove export lines from shell rc files."""
+    """Remove export lines and their preceding comment from shell rc files."""
     for rc in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
         if os.path.isfile(rc):
             with open(rc) as f:
                 lines = f.readlines()
+            out = []
+            for ln in lines:
+                if f"export {key}=" in ln:
+                    if out and out[-1].strip() == "# Added by Headroom Dashboard":
+                        out.pop()
+                    continue
+                out.append(ln)
             with open(rc, "w") as f:
-                skip_next = False
-                for ln in lines:
-                    if f"export {key}=" in ln:
-                        skip_next = False
-                        continue
-                    if ln.strip() == "# Added by Headroom Dashboard":
-                        skip_next = True
-                        continue
-                    if skip_next:
-                        skip_next = False
-                        continue
-                    f.write(ln)
+                f.writelines(out)
 
 def _open_in_explorer(filepath):
     filepath = os.path.abspath(filepath)
@@ -319,7 +353,10 @@ def _open_in_explorer(filepath):
         else:
             subprocess.Popen(["explorer", folder])
     elif IS_MAC:
-        subprocess.Popen(["open", "-R" if os.path.isfile(filepath) else "", folder])
+        if os.path.isfile(filepath):
+            subprocess.Popen(["open", "-R", filepath])
+        else:
+            subprocess.Popen(["open", folder])
     else:
         subprocess.Popen(["xdg-open", folder])
 
@@ -524,8 +561,18 @@ class HeadroomApp(ctk.CTk):
         self._refresh()
 
     def _on_close(self):
+        self._cleanup_env()
         self._cleanup_tray()
         self.destroy()
+
+    def _cleanup_env(self):
+        """Remove proxy env vars from Registry so new processes don't inherit stale values."""
+        if self._running:
+            return
+        try:
+            _unset_env_persistent("ANTHROPIC_BASE_URL")
+        except Exception:
+            pass
 
     def _cleanup_tray(self):
         if self._tray_icon:
@@ -560,21 +607,26 @@ class HeadroomApp(ctk.CTk):
             font=ctk.CTkFont(size=13),
             progress_color=GREEN,
         )
-        self._switch.grid(row=2, column=0, padx=20, pady=(0, 20), sticky="w")
+        self._switch.grid(row=2, column=0, padx=20, pady=(0, 4), sticky="w")
+
+        self._hint_label = ctk.CTkLabel(
+            sb, text="", font=ctk.CTkFont(size=9), text_color=DIM,
+            wraplength=140, justify="left")
+        self._hint_label.grid(row=3, column=0, padx=20, pady=(0, 12), sticky="w")
 
         # Info
         self._sb_version = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=11), text_color=DIM)
-        self._sb_version.grid(row=3, column=0, padx=20, sticky="w")
+        self._sb_version.grid(row=4, column=0, padx=20, sticky="w")
         self._sb_uptime = ctk.CTkLabel(sb, text="", font=ctk.CTkFont(size=11), text_color=DIM)
-        self._sb_uptime.grid(row=4, column=0, padx=20, pady=(0, 16), sticky="w")
+        self._sb_uptime.grid(row=5, column=0, padx=20, pady=(0, 16), sticky="w")
 
         # Services heading
         ctk.CTkLabel(sb, text="Services",
                      font=ctk.CTkFont(size=11, weight="bold"), text_color=DIM
-                     ).grid(row=5, column=0, padx=20, pady=(0, 4), sticky="w")
+                     ).grid(row=6, column=0, padx=20, pady=(0, 4), sticky="w")
 
         self._svc_frame = ctk.CTkFrame(sb, fg_color="transparent")
-        self._svc_frame.grid(row=6, column=0, padx=16, sticky="nw")
+        self._svc_frame.grid(row=7, column=0, padx=16, sticky="nw")
         self._svc_labels = {}
 
         # Spacer
@@ -1059,6 +1111,9 @@ class HeadroomApp(ctk.CTk):
                 return
 
             _set_env_persistent("ANTHROPIC_BASE_URL", PROXY_URL)
+            if IS_WIN:
+                self.after(0, lambda: self._hint_label.configure(
+                    text="Restart VS Code / terminal\nto use proxy"))
         except Exception as e:
             self.after(0, lambda e=e: self._show_error(f"Failed to start proxy:\n{e}"))
         finally:
@@ -1093,6 +1148,9 @@ class HeadroomApp(ctk.CTk):
             self._stop_proxy_process()
             time.sleep(1)
             _unset_env_persistent("ANTHROPIC_BASE_URL")
+            if IS_WIN:
+                self.after(0, lambda: self._hint_label.configure(
+                    text="Restart VS Code / terminal\nto connect API directly"))
         finally:
             self._busy = False
             self.after(200, self._refresh)
@@ -1445,6 +1503,7 @@ class HeadroomApp(ctk.CTk):
 
     def _minimize_to_tray(self):
         if not HAS_TRAY:
+            self._cleanup_env()
             self.destroy()
             return
 
@@ -1459,6 +1518,11 @@ class HeadroomApp(ctk.CTk):
             self._tray_icon = pystray.Icon("headroom", icon_img,
                                             "Headroom", menu)
             threading.Thread(target=self._tray_icon.run, daemon=True).start()
+            time.sleep(0.3)
+        try:
+            self._tray_icon.notify("Headroom is still running in the tray.", "Headroom")
+        except Exception:
+            pass
 
     def _tray_show(self, icon=None, item=None):
         self.after(0, self._do_show)
@@ -1469,6 +1533,7 @@ class HeadroomApp(ctk.CTk):
         self.focus_force()
 
     def _tray_quit(self, icon=None, item=None):
+        self._cleanup_env()
         self._cleanup_tray()
         self.after(0, self.destroy)
 
@@ -1850,7 +1915,8 @@ class HeadroomApp(ctk.CTk):
             success = rc == 0
             if success and "headroom-ai" in pkg:
                 global HEADROOM_EXE
-                HEADROOM_EXE = _find_headroom_exe()
+                with _headroom_exe_lock:
+                    HEADROOM_EXE = _find_headroom_exe()
         except Exception as e:
             success = False
 
@@ -1934,5 +2000,13 @@ class HeadroomApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    if not _acquire_instance_lock():
+        import tkinter as _tk
+        from tkinter import messagebox as _mb
+        _r = _tk.Tk()
+        _r.withdraw()
+        _mb.showinfo("Headroom", "Headroom is already running.\nCheck the system tray.")
+        _r.destroy()
+        sys.exit(0)
     app = HeadroomApp()
     app.mainloop()

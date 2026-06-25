@@ -141,11 +141,12 @@ def _bootstrap():
     if not install_ok:
         sys.exit(1)
 
+    _args = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
     if sys.platform == "win32":
-        subprocess.Popen([sys.executable] + sys.argv)
+        subprocess.Popen(_args)
         sys.exit(0)
     else:
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        os.execv(sys.executable, _args)
 
 _bootstrap()
 
@@ -186,6 +187,8 @@ def _acquire_instance_lock():
             _instance_lock.flush()
             return True
         except OSError:
+            _instance_lock.close()
+            _instance_lock = None
             return False
 
 # ── Config ───────────────────────────────────────────────────────────
@@ -254,7 +257,23 @@ def _popen_kwargs():
         return {"creationflags": subprocess.CREATE_NO_WINDOW}
     return {}
 
+def _is_headroom_process(pid):
+    """Verify that a PID belongs to a headroom process before killing it."""
+    try:
+        if IS_WIN:
+            r = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, **_popen_kwargs())
+            return "headroom" in r.stdout.lower()
+        else:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                return b"headroom" in f.read()
+    except Exception:
+        return False
+
 def _kill_pid(pid):
+    if not _is_headroom_process(pid):
+        return
     if IS_WIN:
         subprocess.run(["taskkill", "/F", "/PID", str(pid)],
                        capture_output=True, **_popen_kwargs())
@@ -264,7 +283,7 @@ def _kill_pid(pid):
             os.kill(pid, signal.SIGTERM)
             time.sleep(0.5)
             os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError, OSError):
             pass
 
 def _kill_by_name():
@@ -319,7 +338,8 @@ def _unset_env_persistent(key):
 
 def _write_shell_export(key, value):
     """Append export to ~/.bashrc and ~/.zshrc if not already present."""
-    line = f'export {key}="{value}"'
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+    line = f'export {key}="{escaped}"'
     for rc in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
         if os.path.isfile(rc):
             with open(rc) as f:
@@ -387,8 +407,10 @@ def load_config():
 def save_config(cfg):
     try:
         _ensure_appdata()
-        with open(CONFIG_PATH, "w") as f:
+        tmp = CONFIG_PATH + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(cfg, f, indent=2)
+        os.replace(tmp, CONFIG_PATH)
     except OSError:
         pass
 
@@ -491,7 +513,7 @@ def fetch_json(path):
         with _opener.open(req, timeout=2) as r:
             data = r.read(1 * 1024 * 1024)  # cap at 1MB
             return json.loads(data)
-    except Exception:
+    except (urllib.error.URLError, json.JSONDecodeError, OSError, ValueError, TimeoutError):
         return None
 
 
@@ -537,6 +559,7 @@ class HeadroomApp(ctk.CTk):
         self._tray_icon = None
         self._tray_notified = False
         self._fetch_lock = threading.Lock()
+        self._proxy_lock = threading.Lock()
         self._refresh_id = None
         self._proxy_proc = None
 
@@ -1060,9 +1083,12 @@ class HeadroomApp(ctk.CTk):
     # ── Proxy control ────────────────────────────────────────────────
 
     def _on_switch(self):
-        if self._busy or self._switch_updating:
+        if self._switch_updating:
             return
-        self._busy = True
+        with self._proxy_lock:
+            if self._busy:
+                return
+            self._busy = True
         if self._proxy_var.get() == "on":
             threading.Thread(target=self._do_start, daemon=True).start()
         else:
@@ -1117,7 +1143,8 @@ class HeadroomApp(ctk.CTk):
         except Exception as e:
             self.after(0, lambda e=e: self._show_error(f"Failed to start proxy:\n{e}"))
         finally:
-            self._busy = False
+            with self._proxy_lock:
+                self._busy = False
             self.after(200, self._refresh)
 
     def _stop_proxy_process(self):
@@ -1140,7 +1167,8 @@ class HeadroomApp(ctk.CTk):
         if not killed:
             _kill_by_name()
 
-        self._proxy_proc = None
+        with self._proxy_lock:
+            self._proxy_proc = None
         clear_pid()
 
     def _do_stop(self):
@@ -1152,7 +1180,8 @@ class HeadroomApp(ctk.CTk):
                 self.after(0, lambda: self._hint_label.configure(
                     text="Restart VS Code / terminal\nto connect API directly"))
         finally:
-            self._busy = False
+            with self._proxy_lock:
+                self._busy = False
             self.after(200, self._refresh)
 
     # ── Refresh ──────────────────────────────────────────────────────
@@ -1409,9 +1438,12 @@ class HeadroomApp(ctk.CTk):
 
     def _update_cost(self, stats):
         cost = deep(stats, "cost", fallback={})
-        self._cost_without.configure(text=fmt_usd(cost.get("without_headroom_usd")))
-        self._cost_with.configure(text=fmt_usd(cost.get("with_headroom_usd")))
-        cache = deep(cost, "breakdown", "cache_savings_usd", fallback=0)
+        with_headroom = float(cost.get("cost_with_headroom_usd", 0) or 0)
+        savings = float(cost.get("savings_usd", 0) or 0)
+        without_headroom = with_headroom + savings
+        self._cost_without.configure(text=fmt_usd(without_headroom))
+        self._cost_with.configure(text=fmt_usd(with_headroom))
+        cache = float(cost.get("cache_savings_usd", 0) or 0)
         self._cost_cache.configure(text=fmt_usd(cache))
 
     def _update_contribution(self, stats):
@@ -1697,7 +1729,8 @@ class HeadroomApp(ctk.CTk):
     def _run_stream(self, cmd, env=None):
         with subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, env=env or os.environ) as proc:
+            text=True, bufsize=1, env=env or os.environ,
+            **_popen_kwargs()) as proc:
             for line in proc.stdout:
                 self.after(0, lambda l=line: self._log_append(l))
             proc.wait()
@@ -1952,9 +1985,10 @@ class HeadroomApp(ctk.CTk):
             self._cfg_restart_btn.grid_remove()
 
     def _restart_proxy(self):
-        if self._busy:
-            return
-        self._busy = True
+        with self._proxy_lock:
+            if self._busy:
+                return
+            self._busy = True
         self._cfg_restart_label.configure(text="Restarting...")
         threading.Thread(target=self._do_restart, daemon=True).start()
 
@@ -1983,7 +2017,8 @@ class HeadroomApp(ctk.CTk):
 
             _set_env_persistent("ANTHROPIC_BASE_URL", PROXY_URL)
         finally:
-            self._busy = False
+            with self._proxy_lock:
+                self._busy = False
             def _clear():
                 self._cfg_restart_label.configure(text="")
                 self._cfg_restart_btn.grid_remove()

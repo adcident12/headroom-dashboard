@@ -34,6 +34,7 @@ Single file. Double-click to run. Dependencies install themselves.
 | ซอฟต์แวร์ | เวอร์ชันขั้นต่ำ | หมายเหตุ |
 |-----------|---------------|---------|
 | **Python** | 3.9+ | ต้องติดตั้งก่อนใช้งาน |
+| **C/C++ Compiler** | — | **ต้องติดตั้งก่อน** — ใช้ compile Rust linker และ C++ extensions (ดูรายละเอียดด้านล่าง) |
 | **Rust** | 1.88+ | ใช้ build headroom-ai (app ติดตั้งให้อัตโนมัติ) |
 | **tkinter** | — | มาพร้อม Python บน Windows/macOS; Linux ต้อง `apt install python3-tk` |
 
@@ -61,6 +62,54 @@ sudo apt update && sudo apt install python3 python3-pip python3-tk
 ```bash
 sudo dnf install python3 python3-pip python3-tkinter
 ```
+</details>
+
+<details>
+<summary>C/C++ Compiler — จำเป็นสำหรับ build headroom-ai และ dependencies (คลิกเพื่อดู)</summary>
+
+`headroom-ai` มี Rust component ที่ต้อง compile ด้วย `maturin` และ dependency `hnswlib` เป็น C++ extension — ทั้งคู่ต้องการ C/C++ compiler บนเครื่อง ถ้าไม่มีจะเจอ error:
+
+```
+error: linker `link.exe` not found
+error: Microsoft Visual C++ 14.0 or greater is required.
+```
+
+**Windows — Microsoft Visual C++ Build Tools:**
+
+1. ดาวน์โหลดจาก https://visualstudio.microsoft.com/visual-cpp-build-tools/
+2. เลือก workload **"Desktop development with C++"**
+3. ตรวจสอบว่าเลือก component: **MSVC v14x** และ **Windows SDK**
+4. กด Install แล้ว restart terminal
+
+![Visual Studio Build Tools](screenshots/microsoft_visual_C++_build_tools.png)
+
+**macOS — Xcode Command Line Tools:**
+
+```bash
+xcode-select --install
+```
+
+ไม่ต้องติดตั้ง Xcode เต็ม — Command Line Tools มี `clang` ที่เพียงพอ
+
+**Linux (Ubuntu/Debian):**
+
+```bash
+sudo apt install build-essential python3-dev
+```
+
+**Linux (Fedora/RHEL):**
+
+```bash
+sudo dnf groupinstall "Development Tools"
+sudo dnf install python3-devel
+```
+
+**Linux (Arch):**
+
+```bash
+sudo pacman -S base-devel
+```
+
 </details>
 
 ### Step 1 — Run
@@ -640,6 +689,7 @@ Output อยู่ที่ `dist/`:
 | App เปิดแล้วเห็นแต่ "Setting up..." | รอ pip install เสร็จ ถ้า fail ดู error แล้วรัน `pip install customtkinter` เอง |
 | Proxy เปิดแล้วแต่ Claude Code ไม่ผ่าน Headroom | ปิดแล้วเปิด VS Code / terminal ใหม่ เพื่อรับ env var ใหม่ |
 | ปิด proxy แล้วเจอ `ConnectionRefused` | ปิดแล้วเปิด VS Code / terminal ใหม่ เพื่อเชื่อมต่อ API โดยตรง |
+| `linker link.exe not found` หรือ `Microsoft Visual C++ 14.0 required` | ติดตั้ง [Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) เลือก "Desktop development with C++" (ดู Prerequisites) |
 | "headroom not found" ตอนกด ON | ไป Setup tab กด Setup Everything หรือ `pip install "headroom-ai[all]"` |
 | Rust version เก่าเกินไป | ไป Setup tab กด Update ที่ Rust หรือรัน `rustup update stable` |
 | Build headroom-ai ล้มเหลว | ตรวจว่า Rust >= 1.88: `rustc --version` ถ้าไม่ใช่ให้ `rustup update stable` |

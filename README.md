@@ -341,7 +341,10 @@ Claude Code  ──►  Headroom Proxy (localhost:8787)  ──►  Anthropic AP
 ```
 headroom-dashboard/
 ├── headroom_app.py      # ตัว app ทั้งหมด (single file)
-├── headroom.bat          # Batch CLI wrapper (Windows)
+├── build.py             # PyInstaller build script
+├── requirements.txt     # Python dependencies
+├── headroom.ico         # App icon (Windows build)
+├── headroom.png         # App icon source (256x256)
 ├── README.md
 └── screenshots/
 ```
@@ -352,62 +355,74 @@ headroom-dashboard/
 
 ```
 headroom_app.py
-├── Bootstrap (_bootstrap)          # auto-install UI deps on first run
-├── Constants & Helpers
+├── _bootstrap()                    # auto-install customtkinter, pystray, Pillow
+├── _acquire_instance_lock()        # Named Mutex (Windows) / fcntl (Unix)
+├── Helpers
 │   ├── _find_headroom_exe()        # locate headroom binary
-│   ├── fetch_json(path)            # HTTP GET from proxy
+│   ├── _get_appdata()              # OS-specific appdata directory
+│   ├── fetch_json(path)            # HTTP GET from proxy (1MB cap, 2s timeout)
 │   ├── deep(d, *keys)              # safe nested dict access
-│   ├── fmt_tokens(n)               # format: 1500000 → "1.5M"
-│   ├── fmt_usd(v)                  # format: 2.39 → "$2.39"
-│   ├── fmt_rate(v)                 # format: 98.28 → "98 tok/s"
-│   └── fmt_duration(sec)           # format: 3661 → "1h 1m"
-├── Single Instance Lock
-│   └── _acquire_instance_lock()    # Named Mutex (Windows) / fcntl (Unix)
+│   ├── fmt_tokens / fmt_usd / fmt_rate / fmt_duration
+│   ├── load_config / save_config   # JSON config (atomic write via os.replace)
+│   ├── save_pid / load_pid / clear_pid
+│   └── build_proxy_args(cfg)       # construct proxy CLI arguments
 ├── Platform Helpers
+│   ├── _popen_kwargs()             # CREATE_NO_WINDOW on Windows
+│   ├── _is_headroom_process(pid)   # verify PID belongs to headroom before kill
+│   ├── _kill_pid(pid)              # kill by PID with safety check
+│   ├── _kill_by_name()             # kill by process name (fallback)
 │   ├── _broadcast_env_change()     # WM_SETTINGCHANGE broadcast (Windows)
 │   ├── _set_env_persistent()       # set env var (winreg / shell rc)
 │   ├── _unset_env_persistent()     # remove env var
+│   ├── _write_shell_export()       # append export to bashrc/zshrc (escaped)
+│   ├── _remove_shell_export()      # remove export + comment from bashrc/zshrc
 │   └── _open_in_explorer()         # open file in OS file manager
 └── HeadroomApp (CTk)
     ├── __init__                    # window setup, build UI
-    ├── _build_sidebar()            # proxy switch, status, services
+    ├── _build_sidebar()            # proxy switch, hint label, version, services
     ├── _build_main()               # usage bars, hero stats, tabs
     │   ├── Requests tab
     │   ├── Performance tab         # two-column: Latency + Throughput
     │   ├── Savings tab             # tokens + cost breakdown
-    │   ├── History tab             # two-column: Session/Lifetime + Window/Efficiency
+    │   ├── History tab             # Session/Lifetime + Window/Efficiency
     │   ├── Agents tab              # totals + scrollable per-agent list
-    │   ├── Config tab              # proxy feature switches
+    │   ├── Config tab              # proxy feature switches + restart
     │   └── Setup tab               # Rust + Python deps + Install All
     ├── _build_alert_bar()          # rate limit alert overlay
     ├── Lifecycle
-    │   ├── _cleanup_env()          # remove stale env vars on exit
+    │   ├── _on_close()             # window close → cleanup + destroy
+    │   ├── _cleanup_env()          # remove stale env vars (if proxy stopped)
     │   ├── _cleanup_tray()         # stop tray icon
-    │   ├── _on_close()             # window close handler
-    │   ├── _minimize_to_tray()     # X button → tray with notification
-    │   └── _tray_quit()            # tray menu → Quit
-    ├── Proxy Control
-    │   ├── _do_start()             # start headroom proxy (daemon thread)
-    │   └── _do_stop()              # stop proxy process
+    │   ├── _minimize_to_tray()     # X button → tray + notification
+    │   └── _tray_quit()            # tray menu → cleanup + destroy
+    ├── Proxy Control (_proxy_lock guards all)
+    │   ├── _on_switch()            # toggle handler (thread-safe via _proxy_lock)
+    │   ├── _do_start()             # start proxy (daemon thread)
+    │   ├── _do_stop()              # stop proxy
+    │   ├── _stop_proxy_process()   # kill proxy by PID
+    │   ├── _restart_proxy()        # config change → restart
+    │   └── _do_restart()           # stop + start in sequence
     ├── Refresh Cycle (every 3s)
     │   ├── _refresh()              # spawn fetch thread
     │   ├── _fetch_and_apply()      # HTTP fetch (background thread)
     │   └── _apply_data()           # update all widgets (main thread)
     ├── Update Methods
-    │   ├── _update_sidebar()
-    │   ├── _update_usage()         # subscription bars
-    │   ├── _update_hero()          # hero stats
-    │   ├── _update_requests()
-    │   ├── _update_performance()
-    │   ├── _update_throughput()
-    │   ├── _update_tokens()
-    │   ├── _update_cost()
-    │   ├── _update_lifetime()
-    │   ├── _update_window_tokens()
-    │   ├── _update_contribution()
-    │   ├── _update_agents()
-    │   └── _update_alert()
+    │   ├── _update_sidebar()       # version, uptime, services
+    │   ├── _update_usage()         # subscription window bars
+    │   ├── _update_hero()          # 3 hero stats
+    │   ├── _update_requests()      # request counters + by_model
+    │   ├── _update_performance()   # latency, TTFB, overhead
+    │   ├── _update_throughput()    # generation / compression tok/s
+    │   ├── _update_tokens()        # token breakdown
+    │   ├── _update_cost()          # with/without proxy + cache savings
+    │   ├── _update_lifetime()      # lifetime + session stats
+    │   ├── _update_window_tokens() # subscription window token detail
+    │   ├── _update_contribution()  # headroom contribution to window
+    │   ├── _update_agents()        # per-agent breakdown
+    │   ├── _update_alert()         # rate limit warning bar
+    │   └── _update_config()        # sync config checkboxes from health
     └── Install System
+        ├── _first_run_check()      # auto-open setup tab if deps missing
         ├── _check_deps()           # scan installed packages + Rust
         ├── _detect_rust()          # find rustc, check version
         ├── _install_rust()         # download + install via rustup-init
@@ -542,11 +557,11 @@ stats.display_session.{requests, tokens_saved}
 
 ## Platform Support
 
-| OS | GUI App | CLI Scripts |
-|----|---------|-------------|
-| Windows | Full support | `headroom.bat` |
-| macOS | Full support | — |
-| Linux | Full support (ต้องมี tkinter) | — |
+| OS | รองรับ |
+|----|--------|
+| Windows | Full support |
+| macOS | Full support |
+| Linux | Full support (ต้องมี `python3-tk`) |
 
 ### Config File Location
 
@@ -611,7 +626,6 @@ Output อยู่ที่ `dist/`:
 | `requirements.txt` | ไม่ | Python dependencies |
 | `headroom.ico` | ไม่ | App icon สำหรับ Windows build |
 | `headroom.png` | ไม่ | App icon source (256x256) |
-| `headroom.bat` | ไม่ | Batch CLI wrapper สำหรับ Windows |
 | `README.md` | ไม่ | เอกสารนี้ |
 
 > **แจกจ่ายแบบง่าย:** copy แค่ `headroom_app.py` ไฟล์เดียว แล้ว `python headroom_app.py`

@@ -39,6 +39,7 @@ def main():
         "PIL.Image",
         "PIL.ImageDraw",
         "customtkinter",
+        "usage_history",
     ]
 
     if is_win:

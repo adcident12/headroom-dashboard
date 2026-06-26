@@ -155,6 +155,12 @@ _bootstrap()
 import customtkinter as ctk
 
 try:
+    from usage_history import UsageTracker, UsageStatementWindow
+    HAS_USAGE_HISTORY = True
+except ImportError:
+    HAS_USAGE_HISTORY = False
+
+try:
     import pystray
     from PIL import Image, ImageDraw
     HAS_TRAY = True
@@ -637,6 +643,8 @@ class HeadroomApp(ctk.CTk):
         self._proxy_lock = threading.Lock()
         self._refresh_id = None
         self._proxy_proc = None
+        self._usage_tracker = UsageTracker() if HAS_USAGE_HISTORY else None
+        self._statement_window = None
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -659,6 +667,8 @@ class HeadroomApp(ctk.CTk):
         self._refresh()
 
     def _on_close(self):
+        if self._usage_tracker:
+            self._usage_tracker.close()
         self._cleanup_env()
         self._cleanup_tray()
         self.destroy()
@@ -726,6 +736,17 @@ class HeadroomApp(ctk.CTk):
         self._svc_frame = ctk.CTkFrame(sb, fg_color="transparent")
         self._svc_frame.grid(row=7, column=0, padx=16, sticky="nw")
         self._svc_labels = {}
+
+        # Statement button
+        if HAS_USAGE_HISTORY:
+            ctk.CTkButton(
+                sb, text="📊 Statement", width=132, height=28,
+                font=ctk.CTkFont(size=11),
+                fg_color="transparent", border_width=1,
+                border_color=DIM, text_color=SUBTEXT,
+                hover_color=SURFACE2,
+                command=self._open_statement,
+            ).grid(row=8, column=0, padx=20, pady=(12, 0), sticky="w")
 
         # Spacer
         spacer = ctk.CTkFrame(sb, fg_color="transparent", height=0)
@@ -1318,6 +1339,9 @@ class HeadroomApp(ctk.CTk):
             import traceback
             traceback.print_exc()
 
+        if self._usage_tracker:
+            self._usage_tracker.record_snapshot(stats, proxy_online=running)
+
         self._schedule_next_refresh()
 
     def _schedule_next_refresh(self):
@@ -1668,6 +1692,17 @@ class HeadroomApp(ctk.CTk):
             except Exception:
                 pass
 
+    def _open_statement(self):
+        if self._statement_window is not None:
+            try:
+                if self._statement_window.winfo_exists():
+                    self._statement_window.lift()
+                    self._statement_window.focus_force()
+                    return
+            except Exception:
+                pass
+        self._statement_window = UsageStatementWindow(self, self._usage_tracker)
+
     def _tray_show(self, icon=None, item=None):
         self.after(0, self._do_show)
 
@@ -1677,6 +1712,8 @@ class HeadroomApp(ctk.CTk):
         self.focus_force()
 
     def _tray_quit(self, icon=None, item=None):
+        if self._usage_tracker:
+            self._usage_tracker.close()
         self._cleanup_env()
         self._cleanup_tray()
         self.after(0, self.destroy)

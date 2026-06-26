@@ -12,7 +12,7 @@ Desktop GUI for managing [Headroom](https://headroom-docs.vercel.app) — the co
 >
 > **ผู้ใช้ Claude Code CLI:** หากใช้ Claude Code ผ่าน subscription อยู่แล้ว (เช่น `claude` command ใช้งานได้ปกติ) ไม่ต้องตั้ง `ANTHROPIC_API_KEY` — แค่เปิด proxy ใน Headroom Dashboard แล้วเปิด terminal ใหม่เพื่อรัน Claude Code ผ่าน proxy ได้ทันที
 
-> **Disclaimer:** Repo นี้เป็นโปรเจกต์ส่วนตัวที่สร้างขึ้นเพื่อทดสอบและใช้งานเอง — **ไม่มีแผน patch หรืออัปเดตตาม Headroom อย่างต่อเนื่อง** หาก Headroom API เปลี่ยน dashboard อาจแสดงผลไม่ถูกต้อง ยินดีแชร์ให้นำไปใช้และพัฒนาต่อได้อิสระ (fork/PR ได้เลย) แต่ไม่รับประกันการ maintain ระยะยาว
+> **Disclaimer:** Repo นี้เป็นโปรเจกต์ส่วนตัวที่สร้างขึ้นเพื่อทดสอบและใช้งานเอง — **ไม่มีแผน patch หรืออัปเดตตาม Headroom อย่างต่อเนื่อง** หาก Headroom API เปลี่ยน dashboard อาจแสดงผลไม่ถูกต้อง ยินดีแชร์ให้นำไปใช้และพัฒนาต่อได้อิสระ (fork ได้เลย) แต่ไม่รับประกันการ maintain ระยะยาว
 
 Single file. Double-click to run. Dependencies install themselves.
 

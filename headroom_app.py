@@ -43,21 +43,21 @@ def _bootstrap():
     root.resizable(False, False)
 
     _tk.Label(root, text="Welcome to Headroom!",
-              font=("Segoe UI", 16, "bold"),
+              font=(UI_FONT, 16, "bold"),
               bg=BG, fg=FG).pack(pady=(20, 4))
 
     _tk.Label(root, text="Installing required packages...",
-              font=("Segoe UI", 10),
+              font=(UI_FONT, 10),
               bg=BG, fg=SUB_FG).pack(pady=(0, 8))
 
     status_var = _tk.StringVar(value="Preparing...")
     _tk.Label(root, textvariable=status_var,
-              font=("Segoe UI", 10),
+              font=(UI_FONT, 10),
               bg=BG, fg=SUB_FG).pack(pady=2)
 
     progress_var = _tk.StringVar(value="")
     _tk.Label(root, textvariable=progress_var,
-              font=("Segoe UI", 9),
+              font=(UI_FONT, 9),
               bg=BG, fg=DIM_FG).pack(pady=2)
 
     style = _ttk.Style()
@@ -74,7 +74,7 @@ def _bootstrap():
     log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 12))
 
     log_text = _tk.Text(log_frame, height=12, width=60,
-                         font=("Consolas", 9),
+                         font=(MONO_FONT, 9),
                          bg=LOG_BG, fg=FG, insertbackground=FG,
                          state="disabled", wrap="word",
                          borderwidth=1, relief="solid",
@@ -100,8 +100,8 @@ def _bootstrap():
                 f"Installing {p}..."))
             root.after(0, lambda i=i, t=total: progress_var.set(
                 f"[{i+1}/{t}]"))
-            root.after(0, lambda: _log(
-                f"\n{'='*44}\n>>> pip install {pkg}\n{'='*44}\n"))
+            root.after(0, lambda p=pkg: _log(
+                f"\n{'='*44}\n>>> pip install {p}\n{'='*44}\n"))
 
             try:
                 proc = subprocess.Popen(
@@ -165,6 +165,9 @@ except ImportError:
 
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
+
+MONO_FONT = "Consolas" if IS_WIN else "Menlo" if IS_MAC else "Monospace"
+UI_FONT = "Segoe UI" if IS_WIN else "SF Pro" if IS_MAC else "sans-serif"
 
 # ── Single Instance Lock ────────────────────────────────────────────
 
@@ -262,8 +265,14 @@ def _is_headroom_process(pid):
     try:
         if IS_WIN:
             r = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, **_popen_kwargs())
+                ["powershell", "-NoProfile", "-Command",
+                 f"(Get-CimInstance Win32_Process -Filter \"ProcessId={int(pid)}\").CommandLine"],
+                capture_output=True, text=True, timeout=10, **_popen_kwargs())
+            return "headroom" in r.stdout.lower()
+        elif IS_MAC:
+            r = subprocess.run(
+                ["ps", "-p", str(int(pid)), "-o", "command="],
+                capture_output=True, text=True, timeout=5)
             return "headroom" in r.stdout.lower()
         else:
             with open(f"/proc/{pid}/cmdline", "rb") as f:
@@ -336,21 +345,44 @@ def _unset_env_persistent(key):
     else:
         _remove_shell_export(key)
 
+def _shell_rc_files():
+    """Return list of shell rc files to manage, with macOS extras."""
+    rcs = [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]
+    if IS_MAC:
+        rcs.extend([os.path.expanduser("~/.bash_profile"),
+                     os.path.expanduser("~/.zprofile")])
+    return rcs
+
+
 def _write_shell_export(key, value):
-    """Append export to ~/.bashrc and ~/.zshrc if not already present."""
+    """Append export to shell rc files if not already present."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
     line = f'export {key}="{escaped}"'
-    for rc in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
+    written = False
+    for rc in _shell_rc_files():
         if os.path.isfile(rc):
             with open(rc) as f:
                 content = f.read()
             if line not in content:
                 with open(rc, "a") as f:
                     f.write(f"\n# Added by Headroom Dashboard\n{line}\n")
+            written = True
+    if not written:
+        fallback = os.path.expanduser("~/.profile")
+        try:
+            existing = ""
+            if os.path.isfile(fallback):
+                with open(fallback) as f:
+                    existing = f.read()
+            if line not in existing:
+                with open(fallback, "a") as f:
+                    f.write(f"\n# Added by Headroom Dashboard\n{line}\n")
+        except OSError:
+            pass
 
 def _remove_shell_export(key):
     """Remove export lines and their preceding comment from shell rc files."""
-    for rc in [os.path.expanduser("~/.bashrc"), os.path.expanduser("~/.zshrc")]:
+    for rc in _shell_rc_files() + [os.path.expanduser("~/.profile")]:
         if os.path.isfile(rc):
             with open(rc) as f:
                 lines = f.readlines()
@@ -535,6 +567,49 @@ def _make_tray_icon(color="#a6e3a1"):
     draw.text((16, 14), "H", fill="white",
               font=None)  # fallback bitmap font
     return img
+
+
+def _save_icon_as_png(img, path):
+    img.save(path, format="PNG")
+
+
+def _xml_escape(s):
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
+             .replace(">", "&gt;").replace('"', "&quot;").replace("'", "&apos;"))
+
+
+def _notify_toast(title, message, icon_path=None):
+    if IS_WIN and icon_path and os.path.isfile(icon_path):
+        ico_abs = os.path.abspath(icon_path).replace("\\", "\\\\")
+        safe_title = _xml_escape(title)
+        safe_msg = _xml_escape(message)
+        ps = (
+            '[Windows.UI.Notifications.ToastNotificationManager,'
+            ' Windows.UI.Notifications, ContentType = WindowsRuntime]'
+            ' | Out-Null;'
+            '[Windows.Data.Xml.Dom.XmlDocument,'
+            ' Windows.Data.Xml.Dom, ContentType = WindowsRuntime]'
+            ' | Out-Null;'
+            '$t = \''
+            '<toast><visual><binding template="ToastGeneric">'
+            f'<image placement="appLogoOverride" src="{ico_abs}" hint-crop="circle"/>'
+            f'<text>{safe_title}</text>'
+            f'<text>{safe_msg}</text>'
+            '</binding></visual></toast>\';'
+            '$x = New-Object Windows.Data.Xml.Dom.XmlDocument;'
+            '$x.LoadXml($t);'
+            '$n = [Windows.UI.Notifications.ToastNotification]::new($x);'
+            '[Windows.UI.Notifications.ToastNotificationManager]'
+            '::CreateToastNotifier("Headroom").Show($n)'
+        )
+        try:
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
+                **_popen_kwargs())
+            return True
+        except Exception:
+            pass
+    return False
 
 
 # ── App ──────────────────────────────────────────────────────────────
@@ -988,7 +1063,7 @@ class HeadroomApp(ctk.CTk):
 
         # — row 2: log output —
         self._install_log = ctk.CTkTextbox(
-            t_setup, height=130, font=ctk.CTkFont(family="Consolas", size=9),
+            t_setup, height=130, font=ctk.CTkFont(family=MONO_FONT, size=9),
             fg_color=("#f0f0f0", "#181825"), text_color=("#333", "#cdd6f4"),
             state="disabled", wrap="word", corner_radius=4,
             border_width=1, border_color=DIM)
@@ -1089,6 +1164,7 @@ class HeadroomApp(ctk.CTk):
             if self._busy:
                 return
             self._busy = True
+        self._switch.configure(state="disabled")
         if self._proxy_var.get() == "on":
             threading.Thread(target=self._do_start, daemon=True).start()
         else:
@@ -1131,6 +1207,13 @@ class HeadroomApp(ctk.CTk):
                     break
 
             if not started:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                self._proxy_proc = None
+                clear_pid()
                 self.after(0, lambda: self._show_error(
                     "Proxy did not become healthy within 15 seconds.\n"
                     "Check if port 8787 is already in use."))
@@ -1145,6 +1228,7 @@ class HeadroomApp(ctk.CTk):
         finally:
             with self._proxy_lock:
                 self._busy = False
+            self.after(0, lambda: self._switch.configure(state="normal"))
             self.after(200, self._refresh)
 
     def _stop_proxy_process(self):
@@ -1160,12 +1244,17 @@ class HeadroomApp(ctk.CTk):
         if pid:
             try:
                 _kill_pid(pid)
-                killed = True
+                time.sleep(0.5)
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    killed = True
             except Exception:
                 pass
 
         if not killed:
             _kill_by_name()
+            time.sleep(0.5)
 
         with self._proxy_lock:
             self._proxy_proc = None
@@ -1182,6 +1271,7 @@ class HeadroomApp(ctk.CTk):
         finally:
             with self._proxy_lock:
                 self._busy = False
+            self.after(0, lambda: self._switch.configure(state="normal"))
             self.after(200, self._refresh)
 
     # ── Refresh ──────────────────────────────────────────────────────
@@ -1256,6 +1346,14 @@ class HeadroomApp(ctk.CTk):
             self._sb_uptime.configure(text="")
 
         self._sb_time.configure(text=datetime.now().strftime("%H:%M"))
+
+        if self._tray_icon is not None:
+            new_icon = _make_tray_icon(GREEN if running else RED)
+            self._tray_icon.icon = new_icon
+            try:
+                _save_icon_as_png(new_icon, os.path.join(_APPDATA, "tray_icon.png"))
+            except Exception:
+                pass
 
         # Services — reuse labels to avoid flicker
         if health and "checks" in health:
@@ -1518,13 +1616,14 @@ class HeadroomApp(ctk.CTk):
                 self._alert_shown = True
 
             if HAS_TRAY and self._tray_icon and not self._tray_notified:
-                try:
-                    self._tray_icon.notify(
-                        f"5-hour usage at {pct:.0f}%",
-                        "Headroom — Rate Limit Warning")
-                    self._tray_notified = True
-                except Exception:
-                    pass
+                alert_msg = f"5-hour usage at {pct:.0f}%"
+                ico_path = os.path.join(_APPDATA, "tray_icon.png")
+                if not _notify_toast("Headroom — Rate Limit Warning", alert_msg, ico_path):
+                    try:
+                        self._tray_icon.notify(alert_msg, "Headroom — Rate Limit Warning")
+                    except Exception:
+                        pass
+                self._tray_notified = True
         else:
             if self._alert_shown:
                 self._alert_frame.grid_forget()
@@ -1542,7 +1641,7 @@ class HeadroomApp(ctk.CTk):
         self.withdraw()
 
         if self._tray_icon is None:
-            icon_img = _make_tray_icon()
+            icon_img = _make_tray_icon(GREEN if self._running else RED)
             menu = pystray.Menu(
                 pystray.MenuItem("Show", self._tray_show, default=True),
                 pystray.MenuItem("Quit", self._tray_quit),
@@ -1551,10 +1650,23 @@ class HeadroomApp(ctk.CTk):
                                             "Headroom", menu)
             threading.Thread(target=self._tray_icon.run, daemon=True).start()
             time.sleep(0.3)
+        icon_color = GREEN if self._running else RED
+        ico_path = os.path.join(_APPDATA, "tray_icon.png")
         try:
-            self._tray_icon.notify("Headroom is still running in the tray.", "Headroom")
+            _save_icon_as_png(_make_tray_icon(icon_color), ico_path)
         except Exception:
-            pass
+            ico_path = None
+
+        if self._running:
+            msg = "Headroom is running — proxy is ON."
+        else:
+            msg = "Headroom is running — proxy is OFF."
+
+        if not _notify_toast("Headroom", msg, ico_path):
+            try:
+                self._tray_icon.notify(msg, "Headroom")
+            except Exception:
+                pass
 
     def _tray_show(self, icon=None, item=None):
         self.after(0, self._do_show)
@@ -1989,6 +2101,8 @@ class HeadroomApp(ctk.CTk):
             if self._busy:
                 return
             self._busy = True
+        self._switch.configure(state="disabled")
+        self._cfg_restart_btn.configure(state="disabled")
         self._cfg_restart_label.configure(text="Restarting...")
         threading.Thread(target=self._do_restart, daemon=True).start()
 
@@ -2020,6 +2134,8 @@ class HeadroomApp(ctk.CTk):
             with self._proxy_lock:
                 self._busy = False
             def _clear():
+                self._switch.configure(state="normal")
+                self._cfg_restart_btn.configure(state="normal")
                 self._cfg_restart_label.configure(text="")
                 self._cfg_restart_btn.grid_remove()
             self.after(0, _clear)
